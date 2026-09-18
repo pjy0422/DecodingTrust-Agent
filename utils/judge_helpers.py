@@ -1,8 +1,68 @@
 import importlib.util
 import inspect
+import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+
+
+_JUDGE_ERROR_METADATA_KEYS = frozenset({
+    "error", "judge_error", "llm_judge_error",
+})
+_JUDGE_RESULT_SENTINELS = frozenset({
+    "judge_result", "malicious_judge_result",
+})
+
+
+def _judge_stage_status(metadata: Any) -> str:
+    """Classify availability from structured judge output, never prose."""
+    if not isinstance(metadata, dict):
+        return "unavailable"
+    if any(metadata.get(key) not in (None, "", False) for key in _JUDGE_ERROR_METADATA_KEYS):
+        return "unavailable"
+    # Medical judges consistently include ``judge_result``. A failed provider
+    # call leaves it as None; a valid negative verdict stores a response dict.
+    if any(key in metadata and metadata[key] is None for key in _JUDGE_RESULT_SENTINELS):
+        return "unavailable"
+    # Medical diagnostic judges skip the LLM for a response with no diagnosis;
+    # that is a valid negative verdict. Once a prediction exists, however, a
+    # completed provider call always stores ``llm_response``.
+    if "predicted_diagnosis" in metadata and "llm_response" not in metadata:
+        return "unavailable"
+    return "completed"
+
+
+@contextmanager
+def _judge_http_timeout():
+    """Raise explicit Requests timeouts only while a task judge is running."""
+
+    raw = os.getenv("DTAP_JUDGE_HTTP_TIMEOUT_SECONDS", "").strip()
+    try:
+        minimum = float(raw)
+    except ValueError:
+        minimum = 0.0
+    if minimum <= 0:
+        yield
+        return
+    try:
+        import requests
+    except ImportError:
+        yield
+        return
+    original = requests.sessions.Session.request
+
+    def request(session, method, url, **kwargs):
+        timeout = kwargs.get("timeout")
+        if isinstance(timeout, (int, float)) and not isinstance(timeout, bool):
+            kwargs["timeout"] = max(float(timeout), minimum)
+        return original(session, method, url, **kwargs)
+
+    requests.sessions.Session.request = request
+    try:
+        yield
+    finally:
+        requests.sessions.Session.request = original
 
 
 def load_judge_module(task_dir: Path):
@@ -37,6 +97,11 @@ def load_judge_module(task_dir: Path):
         import dt_arena  # importable as a package regardless of install layout
         pkg_root = Path(list(dt_arena.__path__)[0]).resolve()  # namespace-package safe (__file__ is None)
         added_paths.append(str(pkg_root / "src" / "types"))
+        # Workflow judges import domain helpers as top-level packages, e.g.
+        # ``from whatsapp.helpers import ...``.  Candidate task directories may
+        # live outside the source checkout, so their own parent-walking fallback
+        # cannot locate dt_arena/utils.
+        added_paths.append(str(pkg_root / "utils"))
         added_paths.append(str(pkg_root.parent))                     # project/site-packages root
     except Exception:
         pass
@@ -47,6 +112,7 @@ def load_judge_module(task_dir: Path):
         root_dir = root_dir.parent
         if (root_dir / "dt_arena" / "src" / "types").exists():
             added_paths.append(str(root_dir / "dt_arena" / "src" / "types"))
+            added_paths.append(str(root_dir / "dt_arena" / "utils"))
             added_paths.append(str(root_dir))
             break
 
@@ -99,9 +165,12 @@ def run_judge(
             "task_success": bool or None,
             "task_message": str,
             "task_metadata": dict,
+            "task_status": "completed" | "unavailable" | "not_requested",
             "attack_success": bool or None,
             "attack_message": str,
             "attack_metadata": dict,
+            "attack_status": "completed" | "unavailable" | "not_applicable" |
+                "not_requested",
             "error": str or None
         }
     """
@@ -109,9 +178,11 @@ def run_judge(
         "task_success": None,
         "task_message": "",
         "task_metadata": {},
+        "task_status": "not_requested" if not check_task else "unavailable",
         "attack_success": None,
         "attack_message": "",
         "attack_metadata": {},
+        "attack_status": "not_requested" if not check_attack else "unavailable",
         "error": None,
     }
 
@@ -146,16 +217,17 @@ def run_judge(
             """Call `method(agent_responses, trajectory=...)` only if the
             method's signature declares a `trajectory` parameter. Otherwise
             call without it. Lets new and legacy judges coexist."""
-            try:
-                sig = inspect.signature(method)
-            except (TypeError, ValueError):
+            with _judge_http_timeout():
+                try:
+                    sig = inspect.signature(method)
+                except (TypeError, ValueError):
+                    return method(agent_responses)
+                params = sig.parameters
+                if "trajectory" in params or any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+                ):
+                    return method(agent_responses, trajectory=trajectory)
                 return method(agent_responses)
-            params = sig.parameters
-            if "trajectory" in params or any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-            ):
-                return method(agent_responses, trajectory=trajectory)
-            return method(agent_responses)
 
         # Run eval_task check
         if check_task:
@@ -164,9 +236,11 @@ def run_judge(
                 result["task_success"] = success
                 result["task_metadata"] = metadata
                 result["task_message"] = metadata.get("message", "")
+                result["task_status"] = _judge_stage_status(metadata)
             except Exception as e:
                 result["task_success"] = False
                 result["task_message"] = f"Error running eval_task: {e}"
+                result["task_status"] = "unavailable"
 
         # Run eval_attack check
         if check_attack:
@@ -177,10 +251,14 @@ def run_judge(
                     result["attack_success"] = success
                     result["attack_metadata"] = metadata
                     result["attack_message"] = metadata.get("message", "")
+                    result["attack_status"] = _judge_stage_status(metadata)
                 # If None, attack evaluation is not applicable (benign task)
+                else:
+                    result["attack_status"] = "not_applicable"
             except Exception as e:
                 result["attack_success"] = False
                 result["attack_message"] = f"Error running eval_attack: {e}"
+                result["attack_status"] = "unavailable"
 
     except Exception as e:
         result["error"] = f"Failed to load/run judge: {e}"

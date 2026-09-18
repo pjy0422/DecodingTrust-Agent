@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "threat_models": [
+    "direct",
+    "indirect"
+  ],
+  "selection_profiles": {
+    "release-v1": {"benchmark_index": 0},
+    "holdout-v1": {"benchmark_index": 50}
+  },
+  "domains": [
+    {"name": "browser", "platform": "linux", "vm_backed": false, "default_enabled": true},
+    {"name": "code", "platform": "linux", "vm_backed": false, "default_enabled": true},
+    {"name": "crm", "platform": "linux", "vm_backed": false, "default_enabled": true},
+    {"name": "customer-service", "platform": "linux", "vm_backed": false, "default_enabled": true},
+    {"name": "finance", "platform": "linux", "vm_backed": false, "default_enabled": true},
+    {"name": "legal", "platform": "linux", "vm_backed": false, "default_enabled": true},
+    {"name": "macos", "platform": "macos", "vm_backed": true, "default_enabled": false},
+    {"name": "medical", "platform": "linux", "vm_backed": false, "default_enabled": true},
+    {"name": "os-filesystem", "platform": "linux", "vm_backed": false, "default_enabled": true},
+    {"name": "research", "platform": "linux", "vm_backed": false, "default_enabled": true},
+    {"name": "telecom", "platform": "linux", "vm_backed": false, "default_enabled": true},
+    {"name": "travel", "platform": "linux", "vm_backed": false, "default_enabled": true},
+    {"name": "windows", "platform": "windows", "vm_backed": true, "default_enabled": false},
+    {"name": "workflow", "platform": "linux", "vm_backed": false, "default_enabled": true}
+  ]
+}

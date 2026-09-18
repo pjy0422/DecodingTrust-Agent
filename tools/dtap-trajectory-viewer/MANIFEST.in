@@ -1,0 +1,3 @@
+recursive-include dtap_traj/assets *
+recursive-include dtap_traj/web *
+include README.md

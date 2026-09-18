@@ -10,6 +10,8 @@ import sys
 from typing import Optional, Dict, Any, List
 
 import psycopg
+from psycopg import sql
+from psycopg.types.json import Jsonb
 from fastmcp import FastMCP
 
 # Configuration - Connect directly to PostgreSQL
@@ -44,6 +46,57 @@ def _run_sql(sql: str, params: tuple = None) -> dict:
         return {"error": "db_error", "message": str(e)}
 
 
+def _column_type(value: Any) -> str:
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, int):
+        return "BIGINT"
+    if isinstance(value, float):
+        return "DOUBLE PRECISION"
+    if isinstance(value, (dict, list)):
+        return "JSONB"
+    return "TEXT"
+
+
+def _adapt(value: Any) -> Any:
+    return Jsonb(value) if isinstance(value, (dict, list)) else value
+
+
+def _prepare_table(cur: Any, table_name: str, rows: List[Dict[str, Any]]) -> None:
+    """Make a bounded task table capable of storing the submitted row shape."""
+    if not table_name.isidentifier() or not all(
+        isinstance(key, str) and key.isidentifier()
+        for row in rows for key in row if not key.startswith("_")
+    ):
+        raise ValueError("table and column names must be identifiers")
+    cur.execute(
+        "SELECT column_name, is_nullable, column_default "
+        "FROM information_schema.columns "
+        "WHERE table_schema=current_schema() AND table_name=%s",
+        (table_name,),
+    )
+    existing = {name: (nullable, default) for name, nullable, default in cur.fetchall()}
+    submitted = {
+        key: value for row in rows for key, value in row.items()
+        if not key.startswith("_")
+    }
+    if not existing:
+        cur.execute(sql.SQL("CREATE TABLE {} (id BIGSERIAL PRIMARY KEY)").format(
+            sql.Identifier(table_name)
+        ))
+        existing = {"id": ("NO", "generated")}
+    for name, value in submitted.items():
+        if name not in existing:
+            cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN {} {}").format(
+                sql.Identifier(table_name), sql.Identifier(name), sql.SQL(_column_type(value))
+            ))
+    for name, (nullable, default) in existing.items():
+        if name not in submitted and nullable == "NO" and default is None:
+            cur.execute(sql.SQL("ALTER TABLE {} ALTER COLUMN {} DROP NOT NULL").format(
+                sql.Identifier(table_name), sql.Identifier(name)
+            ))
+
+
 @mcp.tool(name="inject_snowflake_data")
 def inject_snowflake_data(
     table_name: str,
@@ -68,25 +121,19 @@ def inject_snowflake_data(
         return {"error": "no_data", "message": "No data provided"}
 
     try:
-        columns = list(data[0].keys())
-        # Filter out metadata columns
-        columns = [c for c in columns if not c.startswith('_')]
-        
-        placeholders = ', '.join(['%s'] * len(columns))
-        col_names = ', '.join(columns)
-        
         inserted = 0
         with _get_pg_conn() as conn:
             with conn.cursor() as cur:
+                _prepare_table(cur, table_name, data)
                 for row in data:
-                    values = tuple(row.get(col) for col in columns)
-                    sql = f"INSERT INTO {table_name} ({col_names}) VALUES ({placeholders})"
-                    try:
-                        cur.execute(sql, values)
-                        inserted += 1
-                    except Exception as e:
-                        # Table might not exist or column mismatch, try to continue
-                        pass
+                    columns = [name for name in row if not name.startswith("_")]
+                    statement = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+                        sql.Identifier(table_name),
+                        sql.SQL(", ").join(map(sql.Identifier, columns)),
+                        sql.SQL(", ").join(sql.Placeholder() for _ in columns),
+                    )
+                    cur.execute(statement, tuple(_adapt(row[name]) for name in columns))
+                    inserted += 1
         
         return {"success": True, "inserted": inserted, "table": table_name}
     except Exception as e:

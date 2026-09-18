@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "dtap_commit": "e0323a521ba4ef88f8e14c1eccf68d0a3d19a458",
+  "openclaw_version": "2026.9.1",
+  "python_version": "3.12.13",
+  "system_tools": {
+    "jq": {
+      "version": "jq-1.8.2",
+      "sha256": "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f"
+    }
+  },
+  "python_packages": {
+    "fastmcp": "2.13.0.2",
+    "httpx": "0.28.1",
+    "mcp": "1.26.0",
+    "pytest": "8.4.2",
+    "PyYAML": "6.0.3"
+  },
+  "container_images": {
+    "axllent/mailpit:latest": "axllent/mailpit@sha256:0059ef81e492a7192af3816281eed6859eb078bd7bdc58b76757c13e10e53a7d",
+    "decodingtrustagent/e-commerce:v1-slim": "decodingtrustagent/e-commerce@sha256:5f84ce6018262409b1a73c83979dc097f88745f82c0515cb21f9b02288d772e1",
+    "decodingtrustagent/finance:latest": "decodingtrustagent/finance@sha256:21f51f3432cfe051a8128c9edbc5192f466c8c2d0bf06faa96eaa7117670fc91",
+    "decodingtrustagent/gmail:service-latest": "decodingtrustagent/gmail@sha256:bea4bfc3afec52b6abfc99a6ab78bdfe70eec3934635598bc8d500434273fc68",
+    "decodingtrustagent/gmail:ui-latest": "decodingtrustagent/gmail@sha256:43aae8238b627160d9459cf924bcedace3a8a928e4e8182d12d51f014615d605",
+    "decodingtrustagent/legal:latest": "decodingtrustagent/legal@sha256:fc8e8175524aa9d51c151271d12d7d066bdd9b3deed85558e8655244c4ab91c3",
+    "decodingtrustagent/medical-service:latest": "decodingtrustagent/medical-service@sha256:388c47d7f5fcd34b03013dd482d85eac0945007348e942fa46b14d50a180ffe2",
+    "decodingtrustagent/os-filesystem:filesystem": "decodingtrustagent/os-filesystem@sha256:7dc11a71388793b859cf7332f0d474784164d5e15bae751b28dab85a92b10732",
+    "decodingtrustagent/paypal:api-latest": "decodingtrustagent/paypal@sha256:d1a9efa1ce0c778eafb258602d7f60cfc27f52479380d01e56c68d1e17fa0d45",
+    "decodingtrustagent/paypal:ui-latest": "decodingtrustagent/paypal@sha256:16e7c46d7255a700941d78ba524d1f3439dea81cab80a2f5ec885811096acba9",
+    "decodingtrustagent/research:latest": "decodingtrustagent/research@sha256:e3e402a06f73eb8ce332b2572d6cac187a6e8fbd5ddf38c4b74a7393810fff96",
+    "decodingtrustagent/salesforce-crm:latest": "decodingtrustagent/salesforce-crm@sha256:ec1ee52b0af706908c55178bb49831211ceeb6c8914e8efef82fee1d260619bb",
+    "decodingtrustagent/salesforce-crm:mariadb": "decodingtrustagent/salesforce-crm@sha256:4a47fd1b2d39345299e107a46abb91aaee2227226adeb7729cf72c26be739025",
+    "decodingtrustagent/servicenow:db": "decodingtrustagent/servicenow@sha256:a20714632b12dc1d0151b96f60a57a76a81ce316d5dea3200d2dde7941a4a3a7",
+    "decodingtrustagent/servicenow:latest": "decodingtrustagent/servicenow@sha256:457d96d76d547650bcc99fdcb0254954627c0702746ee167482b30281a4297f3",
+    "decodingtrustagent/slack:api-latest": "decodingtrustagent/slack@sha256:7e864c1706d77a2932ce488ea76f4ab9057687a7ed379b707289f2c2442a0f4d",
+    "decodingtrustagent/slack:ui-latest": "decodingtrustagent/slack@sha256:6c724579bb4e0b72457f3aceb2c434c0acaac147278eab8908f781a958265026",
+    "decodingtrustagent/telecom:latest": "decodingtrustagent/telecom@sha256:7ddf07739ec4db8878fc7d6734fbadff3c19573514f3e68840e2bbeb9e9ece1b",
+    "decodingtrustagent/travel:latest": "decodingtrustagent/travel@sha256:7be2cbe677725f7b15ca74c8666e07a7ab2f7041d60a39d1dd50dabbb02992d8",
+    "decodingtrustagent/windows:latest": "decodingtrustagent/windows@sha256:8eb3c18ebd7d76e5fdf642bd09ebb430c39d56a10157467d3ef9ebee7709f8ee",
+    "decodingtrustagent/macos:latest": "decodingtrustagent/macos@sha256:eddad7712803278e4d81ac0d3255a5273a3b86b06fdec7a414881707b75a7855",
+    "postgres:16": "postgres@sha256:4b7183ac05f8ef417db21fd72d71047a4238340c261d3cc3ddb6d579ab5071ae"
+  },
+  "guest_disks": {
+    "windows": {
+      "repository": "AI-Secure/decodingtrust-windows-qcow2",
+      "revision": "0c92c06dde9c46b17deb9c41af70578cb2e93d3b",
+      "root_env": "WINDOWS_DATA_DIR",
+      "files": {
+        "data.qcow2": {
+          "size": 47980150784,
+          "sha256": "e06774ff31b0bb936f64ce968b0316056656957ae538937ca69ade24ef72def4"
+        }
+      }
+    },
+    "macos": {
+      "repository": "AI-Secure/decodingtrust-macos-qcow2",
+      "revision": "cba7037345f75cc277220802e2029047aee3e750",
+      "root_env": "MACOS_DATA_DIR",
+      "files": {
+        "14/data.qcow2": {
+          "size": 22134915072,
+          "sha256": "880a2fb4b120a7b594d5e47932fd73a8ea67cd88d2c837047b788b39a9e2f34d"
+        }
+      }
+    }
+  }
+}

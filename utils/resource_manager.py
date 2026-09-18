@@ -219,7 +219,7 @@ class ResourceManager:
                 return task.ports[var_name]
             
             # Try default port first if specified
-            if default is not None:
+            if default is not None and os.getenv("DT_DISABLE_DEFAULT_PORTS") != "1":
                 if self._is_port_available(default):
                     task.ports[var_name] = default
                     self._used_ports.add(default)

@@ -17,8 +17,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 
 from dt_arena.src.types.agent import Agent, AgentConfig, RuntimeConfig, MCPServerConfig, AgentResult
 from dt_arena.src.types.trajectory import Trajectory
+from dt_arena.src.feedback_observation import (
+    build_environment_feedback_probe,
+    build_static_feedback_probes,
+)
 
-from .mcp_proxy import MCPProxyManager
+from .mcp_proxy import MCPProxyManager, _tool_timeout_seconds
 from .utils import OpenClawTrajectoryConverter
 from .plugin_generator import StaticPluginGenerator, MCPServerTools, MCPTool
 from .helpers.auth_helpers import populate_openclaw_profile_auth
@@ -37,6 +41,54 @@ OPENCLAW_TRAJECTORY_CONVERSION_TIMEOUT_SECONDS: float = float(
 
 # OpenClaw config path
 OPENCLAW_CONFIG_PATH = Path.home() / ".openclaw" / "openclaw.json"
+
+
+def _openclaw_token_usage(payload: Any) -> Optional[Dict[str, Any]]:
+    """Project OpenClaw's provider receipt without estimating missing fields."""
+    if not isinstance(payload, dict):
+        return None
+    meta = payload.get("meta")
+    agent_meta = meta.get("agentMeta") if isinstance(meta, dict) else None
+    candidates = (
+        agent_meta.get("diagnosticUsage") if isinstance(agent_meta, dict) else None,
+        agent_meta.get("usage") if isinstance(agent_meta, dict) else None,
+        agent_meta.get("lastCallUsage") if isinstance(agent_meta, dict) else None,
+        meta.get("usage") if isinstance(meta, dict) else None,
+        payload.get("usage"),
+    )
+    usage = next((item for item in candidates if isinstance(item, dict)), None)
+    if usage is None:
+        return None
+
+    def count(*names: str) -> Optional[int]:
+        for name in names:
+            value = usage.get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return max(0, int(value))
+        return None
+
+    input_tokens = count("input", "inputTokens", "input_tokens")
+    output_tokens = count("output", "outputTokens", "output_tokens")
+    if input_tokens is None and output_tokens is None:
+        return None
+    cache_read = count("cacheRead", "cache_read_input_tokens") or 0
+    cache_write = count("cacheWrite", "cache_creation_input_tokens") or 0
+    reasoning = count("reasoningTokens", "reasoning_tokens")
+    prompt_tokens = (input_tokens or 0) + cache_read + cache_write
+    output_tokens = output_tokens or 0
+    return {
+        "input_tokens": input_tokens or 0,
+        "cache_read_tokens": cache_read,
+        "cache_write_tokens": cache_write,
+        "output_tokens": output_tokens,
+        "reasoning_tokens": reasoning,
+        "reasoning_source": "provider" if reasoning is not None else "unavailable",
+        "tokens_with_reasoning": prompt_tokens + output_tokens,
+        "tokens_without_reasoning": (
+            prompt_tokens + max(0, output_tokens - reasoning)
+            if reasoning is not None else None
+        ),
+    }
 
 
 class OpenClawAgent(Agent):
@@ -82,6 +134,9 @@ class OpenClawAgent(Agent):
 
         # Session management
         self._session_id: str = f"dt-arena-{uuid.uuid4().hex[:8]}"
+        self._mcp_event_log: str = os.path.join(
+            self._runtime_trace_dir, f"{self._session_id}.mcp-events.jsonl"
+        )
         self._conversation_history: List[Dict[str, Any]] = []
 
         # Unique profile name for isolation (prevents plugin conflicts in parallel execution)
@@ -93,6 +148,8 @@ class OpenClawAgent(Agent):
         self._turn_count: int = 0
         self._trace_metadata: Optional[Dict[str, Any]] = None
         self._current_trajectory: Optional[Trajectory] = None
+        self._last_cli_payload: Optional[Dict[str, Any]] = None
+        self._token_usage: Optional[Dict[str, Any]] = None
 
         # MCP Proxy Manager
         self._proxy_manager: Optional[MCPProxyManager] = None
@@ -194,11 +251,12 @@ class OpenClawAgent(Agent):
         Environment variables are set when running OpenClaw CLI:
         - OPENCLAW_CONFIG_PATH: path to temp openclaw config
         """
-        # Load base OpenClaw config as template
-        base_config = self._load_openclaw_config()
-
-        # Build OpenClaw config with model from runtime_config
-        openclaw_config = json.loads(json.dumps(base_config))  # Deep copy
+        # Evaluation profiles must be isolated from the operator's persistent
+        # OpenClaw configuration.  Copying ~/.openclaw/openclaw.json here can
+        # leak unrelated providers/plugins into a benchmark and, after an
+        # OpenClaw upgrade, can make every task fail on stale config keys.
+        # Materialize only the settings required by this DTAP attempt.
+        openclaw_config: Dict[str, Any] = {}
 
         # Set model from runtime_config
         model = self.runtime_config.model
@@ -210,8 +268,51 @@ class OpenClawAgent(Agent):
             openclaw_config["agents"]["defaults"]["model"] = {}
 
         openclaw_config["agents"]["defaults"]["model"]["primary"] = model
+        # A hardened slime DTAP child maps its trusted victim provider aliases
+        # onto the standard Anthropic environment variables before constructing
+        # the agent. OpenClaw otherwise consults only its user's persistent
+        # provider catalog, which makes an unqualified evaluation model resolve
+        # against unrelated local configuration. Materialize an isolated custom
+        # provider instead; the key remains an environment reference and is
+        # never written to the generated profile.
+        dtap_anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL", "").strip()
+        if dtap_anthropic_base_url and os.environ.get("ANTHROPIC_API_KEY", "").strip():
+            provider_name = "dtap-anthropic"
+            model_id = model.split("/", 1)[1] if model.startswith(
+                provider_name + "/"
+            ) else model
+            openclaw_config["agents"]["defaults"]["model"]["primary"] = (
+                f"{provider_name}/{model_id}"
+            )
+            openclaw_config["models"] = {
+                "providers": {
+                    provider_name: {
+                        "baseUrl": dtap_anthropic_base_url,
+                        "apiKey": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "ANTHROPIC_API_KEY",
+                        },
+                        "api": "anthropic-messages",
+                        # Ollama's hosted Anthropic-compatible endpoint expects
+                        # the shared token as Authorization: Bearer rather than
+                        # Anthropic's native x-api-key header.
+                        "authHeader": True,
+                        "models": [
+                            {
+                                "id": model_id,
+                                "name": model_id,
+                                "reasoning": True,
+                                "input": ["text", "image"],
+                                "contextWindow": 200000,
+                                "maxTokens": 8192,
+                            }
+                        ],
+                    }
+                }
+            }
         # litellm support
-        if model.startswith("litellm/"):
+        elif model.startswith("litellm/"):
             openclaw_config["models"] = {
                 "providers": {
                     "litellm": {
@@ -313,6 +414,7 @@ class OpenClawAgent(Agent):
                 configured_servers[server_name] = {
                     "transport": "streamable-http",
                     "url": proxy_url,
+                    "requestTimeoutMs": int(_tool_timeout_seconds() * 1000),
                 }
             openclaw_config["mcp"]["servers"] = configured_servers
 
@@ -339,38 +441,16 @@ class OpenClawAgent(Agent):
             if self._generated_plugin_id not in openclaw_config["plugins"]["allow"]:
                 openclaw_config["plugins"]["allow"].append(self._generated_plugin_id)
 
-            # Add installs metadata
-            if "installs" not in openclaw_config["plugins"]:
-                openclaw_config["plugins"]["installs"] = {}
-
-            # Use profile-specific extensions directory for isolation
-            plugin_path = os.path.join(self._profile_extensions_dir, self._generated_plugin_id)
-            openclaw_config["plugins"]["installs"][self._generated_plugin_id] = {
-                "source": "path",
-                "sourcePath": plugin_path,
-                "installPath": plugin_path,
-                "version": "1.0.0",
-                "installedAt": datetime.now().isoformat()
-            }
-
             if self._debug:
                 print(f"[OpenClaw] Enabled static plugin: {self._generated_plugin_id}")
 
         if self._proxy_urls or self._generated_plugin_id:
             if "agents" not in openclaw_config:
                 openclaw_config["agents"] = {}
-            if "list" not in openclaw_config["agents"]:
-                openclaw_config["agents"]["list"] = []
+            if "entries" not in openclaw_config["agents"]:
+                openclaw_config["agents"]["entries"] = {}
 
-            main_agent = None
-            for agent in openclaw_config["agents"]["list"]:
-                if agent.get("id") == "main":
-                    main_agent = agent
-                    break
-
-            if main_agent is None:
-                main_agent = {"id": "main"}
-                openclaw_config["agents"]["list"].append(main_agent)
+            main_agent = openclaw_config["agents"]["entries"].setdefault("main", {})
 
             if "tools" not in main_agent:
                 main_agent["tools"] = {}
@@ -629,7 +709,12 @@ class OpenClawAgent(Agent):
         await self._setup_skills()
 
         # Create MCP proxy servers
-        self._proxy_manager = MCPProxyManager(debug=self._debug, hook_manager=self.hook_manager)
+        self._proxy_manager = MCPProxyManager(
+            debug=self._debug,
+            hook_manager=self.hook_manager,
+            event_log_path=self._mcp_event_log,
+            episode_id=os.environ.get("DTAP_EVALUATION_EPISODE_ID", self._session_id),
+        )
 
         # Get tool injections from runtime config
         tool_injections = self.runtime_config.mcp_injection or {}
@@ -671,6 +756,7 @@ class OpenClawAgent(Agent):
             "--message", message,
             "--thinking", self._get_thinking_level(),
             "--session-id", self._session_id,
+            "--json",
         )
 
         if self._debug:
@@ -717,17 +803,34 @@ class OpenClawAgent(Agent):
                     "error": error_output or f"Exit code {proc.returncode}",
                 }
 
-            # Try to parse JSON if output looks like JSON
-            if output.startswith('{'):
+            # Current OpenClaw emits a stable JSON envelope after optional
+            # migration/plugin status lines. Decode the largest complete JSON
+            # object rather than assuming stdout starts with ``{``.
+            decoder = json.JSONDecoder()
+            decoded: List[tuple[int, Dict[str, Any]]] = []
+            for index, character in enumerate(output):
+                if character != "{":
+                    continue
                 try:
-                    result = json.loads(output)
-                    return {
-                        "success": True,
-                        "content": result.get("content", result.get("message", output)),
-                        "error": None,
-                    }
+                    value, end = decoder.raw_decode(output[index:])
                 except json.JSONDecodeError:
-                    pass
+                    continue
+                if isinstance(value, dict):
+                    decoded.append((end, value))
+            if decoded:
+                result = max(decoded, key=lambda item: item[0])[1]
+                self._last_cli_payload = result
+                self._token_usage = _openclaw_token_usage(result)
+                payload_texts = [
+                    item.get("text", "")
+                    for item in result.get("payloads", [])
+                    if isinstance(item, dict) and isinstance(item.get("text"), str)
+                ]
+                meta = result.get("meta") if isinstance(result.get("meta"), dict) else {}
+                content = "\n".join(payload_texts).strip()
+                if not content:
+                    content = str(meta.get("finalAssistantVisibleText", "")).strip()
+                return {"success": True, "content": content or output, "error": None}
 
             return {
                 "success": True,
@@ -835,6 +938,7 @@ class OpenClawAgent(Agent):
         profile_dir = Path(self._profile_dir)
         runtime_trace_dir = Path(self._runtime_trace_dir)
         deadline = time.monotonic() + max(wait_seconds, 0.0)
+        tried_materialize = False
 
         def _resolve_trajectory_pointer(pointer_path: Path) -> Optional[str]:
             try:
@@ -845,6 +949,36 @@ class OpenClawAgent(Agent):
             runtime_file = pointer.get("runtimeFile")
             if runtime_file and os.path.exists(runtime_file):
                 return runtime_file
+            return None
+
+        def _existing_jsonl_from_output(output: str) -> Optional[str]:
+            """Find a transcript materialized by current OpenClaw releases."""
+            candidates: List[str] = []
+            for line in reversed(output.splitlines()):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    candidates.append(line)
+                    continue
+
+                def collect(item: Any) -> None:
+                    if isinstance(item, str):
+                        candidates.append(item)
+                    elif isinstance(item, dict):
+                        for child in item.values():
+                            collect(child)
+                    elif isinstance(item, list):
+                        for child in item:
+                            collect(child)
+
+                collect(value)
+            for candidate in candidates:
+                path = Path(candidate).expanduser()
+                if path.suffix == ".jsonl" and path.is_file():
+                    return str(path)
             return None
 
         while True:
@@ -865,6 +999,30 @@ class OpenClawAgent(Agent):
                 if resolved:
                     return resolved
 
+            # OpenClaw 2026.9 stores embedded-agent transcripts in SQLite, so
+            # there may be no profile-local JSONL until the supported
+            # `transcripts path --transcript` command materializes one.
+            if not tried_materialize:
+                tried_materialize = True
+                try:
+                    result = await asyncio.to_thread(
+                        subprocess.run,
+                        self._build_openclaw_command(
+                            "--profile", self._profile_name,
+                            "transcripts", "path", self._session_id,
+                            "--transcript", "--json",
+                        ),
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                        env=self._build_openclaw_env(),
+                    )
+                    materialized = _existing_jsonl_from_output(result.stdout)
+                    if materialized:
+                        return materialized
+                except Exception:
+                    pass
+
             if time.monotonic() >= deadline:
                 break
             await asyncio.sleep(0.25)
@@ -876,9 +1034,108 @@ class OpenClawAgent(Agent):
             )
         return None
 
+    def register_environment_feedback(
+        self,
+        injections: List[Dict[str, Any]],
+        results: List[Dict[str, Any]],
+    ) -> None:
+        """Register trusted probes after injection IDs have been returned."""
+        if self._proxy_manager is None:
+            return
+        remaining = list(results)
+        for injection in injections:
+            result = next((
+                item for item in remaining
+                if item.get("server_name") == injection.get("server_name")
+                and item.get("tool_name") == injection.get("tool_name")
+                and item.get("turn_id") == injection.get("turn_id")
+                and item.get("feedback_step_index") == injection.get("feedback_step_index")
+            ), None)
+            if result is None:
+                result = {
+                    "feedback_step_index": injection.get("feedback_step_index"),
+                    "result": None,
+                }
+            else:
+                remaining.remove(result)
+            self._proxy_manager.register_feedback_probe(
+                build_environment_feedback_probe(injection, result)
+            )
+
+    def register_attack_feedback(self, attack_config: Any) -> None:
+        """Register non-environment attack probes after the proxy exists."""
+        if self._proxy_manager is None:
+            return
+        for probe in build_static_feedback_probes(attack_config):
+            self._proxy_manager.register_feedback_probe(probe)
+
+    def _observe_feedback_messages(self, session_path: str) -> None:
+        if self._proxy_manager is None:
+            return
+        try:
+            path = Path(session_path)
+            if path.stat().st_size > 32 * 1024 * 1024:
+                return
+            for line in path.read_text(encoding="utf-8").splitlines():
+                value = json.loads(line)
+                self._proxy_manager.observe_runtime_event(value)
+
+                def visit(item: Any) -> None:
+                    if isinstance(item, dict):
+                        snapshot = item.get("messagesSnapshot")
+                        if isinstance(snapshot, list):
+                            self._proxy_manager.observe_messages_snapshot(snapshot)
+                        for child in item.values():
+                            visit(child)
+                    elif isinstance(item, list):
+                        for child in item:
+                            visit(child)
+
+                visit(value)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return
+
     async def _generate_trajectory(self, duration: float = 0.0) -> None:
         """Generate trajectory from OpenClaw session JSONL."""
         session_path = await self._get_session_log_path(wait_seconds=5.0)
+        if not session_path and self._last_cli_payload:
+            # Embedded OpenClaw 2026.9 runs may intentionally be detached from
+            # the transcript catalog. Preserve a standards-compatible dialogue
+            # trajectory from the stable CLI envelope instead of dropping the
+            # victim artifact entirely. Tool names remain available through the
+            # separately captured MCP catalog; arguments/results cannot be
+            # reconstructed from this fallback envelope.
+            meta = self._last_cli_payload.get("meta", {})
+            if not isinstance(meta, dict):
+                meta = {}
+            prompt = meta.get("finalPromptText")
+            assistant = meta.get("finalAssistantVisibleText")
+            entries = []
+            common = {
+                "traceSchema": "openclaw-trajectory", "schemaVersion": 1,
+                "traceId": self._session_id, "sessionId": self._session_id,
+            }
+            if isinstance(prompt, str) and prompt:
+                entries.append({**common, "type": "prompt.submitted", "data": {"prompt": prompt}})
+            if isinstance(assistant, str) and assistant:
+                entries.append({
+                    **common, "type": "model.completed",
+                    "data": {
+                        "assistantTexts": [assistant],
+                        **({"usage": self._token_usage} if self._token_usage else {}),
+                    },
+                })
+            entries.append({
+                **common, "type": "session.ended",
+                "data": {"status": meta.get("stopReason", "completed")},
+            })
+            fallback_path = Path(self._runtime_trace_dir) / f"{self._session_id}.jsonl"
+            fallback_path.parent.mkdir(parents=True, exist_ok=True)
+            fallback_path.write_text(
+                "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+                encoding="utf-8",
+            )
+            session_path = str(fallback_path)
         if not session_path:
             self._current_trajectory = None
             print(
@@ -886,6 +1143,28 @@ class OpenClawAgent(Agent):
                 f"for session_id={self._session_id}"
             )
             return
+        self._observe_feedback_messages(session_path)
+        trace_metadata = dict(self._trace_metadata or {})
+        if self._token_usage is not None:
+            trace_metadata["token_usage"] = self._token_usage
+        if self._last_cli_payload:
+            cli_meta = self._last_cli_payload.get("meta")
+            agent_meta = (
+                cli_meta.get("agentMeta") if isinstance(cli_meta, dict) else None
+            )
+            execution_trace = (
+                cli_meta.get("executionTrace")
+                if isinstance(cli_meta, dict) else None
+            )
+            model = (
+                agent_meta.get("model") if isinstance(agent_meta, dict) else None
+            ) or (
+                execution_trace.get("winnerModel")
+                if isinstance(execution_trace, dict) else None
+            )
+            if isinstance(model, str) and model.strip():
+                trace_metadata["model"] = model.strip()
+        self._trace_metadata = trace_metadata
         try:
             convert_call = partial(
                 self.trajectory_converter.convert_session_log,
@@ -937,8 +1216,13 @@ class OpenClawAgent(Agent):
         self._conversation_history = []
         self._turn_count = 0
         self._session_id = f"dt-arena-{uuid.uuid4().hex[:8]}"
+        self._mcp_event_log = os.path.join(
+            self._runtime_trace_dir, f"{self._session_id}.mcp-events.jsonl"
+        )
         self._trace_metadata = None
         self._current_trajectory = None
+        self._last_cli_payload = None
+        self._token_usage = None
 
     async def cleanup(self) -> None:
         """Clean up resources: stop proxies, restore config."""

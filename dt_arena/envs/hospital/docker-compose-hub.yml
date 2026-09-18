@@ -8,11 +8,16 @@ services:
       # Keep container bind port fixed; host-side port is mapped dynamically below.
       - HOSPITAL_PORT=12001
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - DTAP_HOSPITAL_OPENAI_COMPAT=${DTAP_HOSPITAL_OPENAI_COMPAT:-0}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - REPLICATE_API_TOKEN=${REPLICATE_API_TOKEN:-}
       - PATIENT_MODEL=${PATIENT_MODEL:-gpt-5.1-2025-11-13}
       - MEASUREMENT_MODEL=${MEASUREMENT_MODEL:-gpt-5.1-2025-11-13}
       - JUDGE_MODEL=${JUDGE_MODEL:-gpt-5.1-2025-11-13}
+    command: ["python", "/app/dtap_hospital_compat.py"]
+    volumes:
+      - ./hospital_compat.py:/app/dtap_hospital_compat.py:ro
     ports:
       - "${HOSPITAL_PORT:-12001}:12001"
     healthcheck:

@@ -77,7 +77,8 @@ def start_injection_mcp_servers(
     injection_config: Dict[str, Any],
     resource_manager: Any = None,
     task_id: Optional[str] = None,
-    host: str = "127.0.0.1"
+    host: str = "127.0.0.1",
+    task_env_overrides: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> Tuple[Optional[MCPServerManager], Dict[str, Any]]:
     """Set up and start environment injection MCP servers.
 
@@ -111,6 +112,7 @@ def start_injection_mcp_servers(
         host=host,
         prefix="injection",
         log_prefix="[INJECTION MCP]",
+        task_env_overrides=task_env_overrides,
     )
 
     # Build updated environment_servers with URLs embedded

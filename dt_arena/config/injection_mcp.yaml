@@ -103,7 +103,8 @@ servers:
     env:
       FILESYSTEM_API_HOST: "127.0.0.1"
       FILESYSTEM_API_PORT: "${OS_FILESYSTEM_API_PORT}"
-      USER_ACCESS_TOKEN: ""  # Set per-session
+      # Injection runs as the trusted setup principal, not as the victim user.
+      USER_ACCESS_TOKEN: "admin-token-for-setup"
       OS_FILESYSTEM_INJECTION_MCP_HOST: "localhost"
       OS_FILESYSTEM_INJECTION_MCP_PORT: "10306"
     transport: http
@@ -114,7 +115,8 @@ servers:
     target_environment: chase
     description: Chase environment injection MCP server for red-teaming (inject Zelle requests/contacts, transactions, statements)
     path: chase/env_injection.py
-    enabled: true
+    # Public release has no chase/env_injection.py implementation.
+    enabled: false
     env:
       CHASE_ENV_INJECTION_MCP_HOST: "localhost"
       CHASE_ENV_INJECTION_MCP_PORT: "10318"
@@ -131,7 +133,8 @@ servers:
     target_environment: robinhood
     description: Robinhood environment injection MCP server for red-teaming (inject orders, positions, watchlists, notifications)
     path: robinhood/env_injection.py
-    enabled: true
+    # Public release has no robinhood/env_injection.py implementation.
+    enabled: false
     env:
       ROBINHOOD_ENV_INJECTION_MCP_HOST: "localhost"
       ROBINHOOD_ENV_INJECTION_MCP_PORT: "10317"
@@ -175,7 +178,8 @@ servers:
     target_environment: reddit
     description: Reddit environment injection MCP server for red-teaming (inject posts, comments, messages, notifications)
     path: reddit/env_injection.py
-    enabled: true
+    # Public release has no reddit/env_injection.py implementation.
+    enabled: false
     env:
       REDDIT_ENV_INJECTION_MCP_HOST: "localhost"
       REDDIT_ENV_INJECTION_MCP_PORT: "8874"
@@ -254,7 +258,8 @@ servers:
   - name: googlesheets-injection
     description: Google Sheets environment injection MCP server for red-teaming
     path: googlesheets/env_injection.py
-    enabled: true
+    # Public release has no googlesheets/env_injection.py implementation.
+    enabled: false
     env:
       GOOGLESHEETS_ENV_INJECTION_MCP_HOST: "localhost"
       GOOGLESHEETS_ENV_INJECTION_MCP_PORT: "8881"
@@ -266,7 +271,8 @@ servers:
   - name: googledrive-injection
     description: Google Drive environment injection MCP server for red-teaming
     path: googledrive/env_injection.py
-    enabled: true
+    # Public release has no googledrive/env_injection.py implementation.
+    enabled: false
     env:
       GOOGLEDRIVE_ENV_INJECTION_MCP_HOST: "localhost"
       GOOGLEDRIVE_ENV_INJECTION_MCP_PORT: "8882"
@@ -411,7 +417,7 @@ servers:
       RESEARCH_ENV_INJECTION_MCP_PORT: "8847"
       # RESEARCH_CONTAINER_NAME: ""  # Removed: empty string overrides inherited parent env var
       # TASK_DOCKER_CLIENT_CONTAINER_NAME: ""  # Removed: inherited from parent process (set by evaluation.py)
-      ARXIV_API_URL: "http://localhost:8034"
+      ARXIV_API_URL: "http://127.0.0.1:${ARXIV_API_PORT}"
       DOCKER_HOST: "unix:///var/run/docker.sock"
     transport: http
     command: ["python3", "env_injection.py"]

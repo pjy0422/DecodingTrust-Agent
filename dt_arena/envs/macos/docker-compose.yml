@@ -6,13 +6,16 @@ services:
       PASS: "docker"
       USER: "docker"
       DISK_FMT: "qcow2"
-      CPU_MODEL: "${CPU_MODEL:-host}"
-      CPU_FLAGS: "${CPU_FLAGS:--invtsc}"
-      # Cold-boot per task (OSWorld-style). Empty ARGUMENTS means no -loadvm /
-      # -incoming — savevm snapshots are tied to the original host CPU's
-      # TSC + XSAVE state and don't survive moving the qcow2 between machines.
-      # Each container creates a thin qcow2 overlay on /base (RO) at /storage,
-      # so VM writes are per-instance and discarded on container teardown.
+      RAM_SIZE: "${MACOS_RAM_SIZE:-8G}"
+      CPU_CORES: "${MACOS_CPU_CORES:-4}"
+      # The wrapper's host default is not macOS-compatible on AMD. Its own
+      # boot logic selects Skylake-Client-v4 for macOS 14 on AMD, so make the
+      # portable model explicit while still allowing a runner override.
+      CPU_MODEL: "${CPU_MODEL:-Skylake-Client-v4}"
+      CPU_FLAGS: "${CPU_FLAGS:-}"
+      # Cold boot from a prepared copy of the published `booted` disk state.
+      # Saved VM-state is host-CPU dependent; task writes remain isolated in
+      # the disposable thin overlay created by entry.sh.
       ARGUMENTS: "${ARGUMENTS-}"
       # VNC config for FastAPI (connects to VM's Screen Sharing via TAP bridge)
       MACOS_HOST: "172.30.0.2"

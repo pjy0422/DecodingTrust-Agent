@@ -1,3 +1,4 @@
+import json
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from dt_arena.src.types.agent import ToolInjection, SkillInjection, A2AInjection
@@ -299,14 +300,17 @@ def get_env_injections_from_attack(
 
     env_injections: List[Dict[str, Any]] = []
 
+    feedback_step_index = 0
     for attack_turn in attack_config.attack_turns:
-        # Filter by turn_id if specified
-        if turn_id is not None and attack_turn.turn_id != turn_id:
-            continue
-
-        env_steps = attack_turn.get_environment_injections()
-
-        for step in env_steps:
+        for step in attack_turn.attack_steps:
+            current_step_index = feedback_step_index
+            feedback_step_index += 1
+            if step.type != "environment":
+                continue
+            # Preserve the submitted-plan index even when injections are
+            # selected one DTAP turn at a time.
+            if turn_id is not None and attack_turn.turn_id != turn_id:
+                continue
             if not step.injection_mcp_tool:
                 print(f"[WARNING] Environment injection missing injection_mcp_tool in turn {attack_turn.turn_id}")
                 continue
@@ -323,6 +327,7 @@ def get_env_injections_from_attack(
                 "tool_name": tool_name,
                 "kwargs": step.kwargs or {},
                 "turn_id": attack_turn.turn_id,
+                "feedback_step_index": current_step_index,
             })
 
     return env_injections
@@ -406,6 +411,7 @@ async def apply_environment_injections_async(
                     "tool_name": injection["tool_name"],
                     "kwargs": injection["kwargs"],
                     "turn_id": injection["turn_id"],
+                    "feedback_step_index": injection.get("feedback_step_index"),
                     "success": False,
                     "result": None,
                     "error": f"Injection server '{server_name}' URL not available",
@@ -425,17 +431,20 @@ async def apply_environment_injections_async(
 
                         # Extract result content
                         result_text = _extract_mcp_result(result)
+                        result_success, result_error = _classify_injection_result(result_text)
 
                         results.append({
                             "server_name": server_name,
                             "tool_name": tool_name,
                             "kwargs": kwargs,
                             "turn_id": turn_id,
-                            "success": True,
+                            "feedback_step_index": injection.get("feedback_step_index"),
+                            "success": result_success,
                             "result": result_text,
-                            "error": None,
+                            "error": result_error,
                         })
-                        print(f"[ENV INJECTION] {server_name}:{tool_name} - Success")
+                        status = "Success" if result_success else f"Failed: {result_error}"
+                        print(f"[ENV INJECTION] {server_name}:{tool_name} - {status}")
 
                     except Exception as e:
                         results.append({
@@ -443,6 +452,7 @@ async def apply_environment_injections_async(
                             "tool_name": tool_name,
                             "kwargs": kwargs,
                             "turn_id": turn_id,
+                            "feedback_step_index": injection.get("feedback_step_index"),
                             "success": False,
                             "result": None,
                             "error": str(e),
@@ -457,6 +467,7 @@ async def apply_environment_injections_async(
                     "tool_name": injection["tool_name"],
                     "kwargs": injection["kwargs"],
                     "turn_id": injection["turn_id"],
+                    "feedback_step_index": injection.get("feedback_step_index"),
                     "success": False,
                     "result": None,
                     "error": f"Failed to connect to server: {e}",
@@ -464,6 +475,22 @@ async def apply_environment_injections_async(
             print(f"[ENV INJECTION] Failed to connect to {server_name} at {server_url}: {e}")
 
     return results
+
+
+def _classify_injection_result(result_text: str) -> tuple[bool, Optional[str]]:
+    """Do not confuse an MCP transport success with a backend write success."""
+    try:
+        value = json.loads(result_text)
+    except (TypeError, json.JSONDecodeError):
+        return True, None
+    while isinstance(value, dict) and set(value) == {"result"}:
+        value = value["result"]
+    if not isinstance(value, dict):
+        return True, None
+    if value.get("success") is False or str(value.get("status", "")).lower() in {"error", "failed"} or value.get("error"):
+        error = value.get("error") or value.get("message") or "backend rejected injection"
+        return False, str(error)
+    return True, None
 
 
 def apply_environment_injections(

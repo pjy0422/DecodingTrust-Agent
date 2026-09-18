@@ -91,9 +91,13 @@ async def _inject_file_impl(file_path: str, content: str) -> dict:
     result = await _execute_command(command)
     
     if not result.get("success", False):
+        detail = result.get("message") or result.get("text") or result.get("stderr")
+        error = result.get("error", "Unknown error")
+        if detail:
+            error = f"{error}: {detail}"
         return {
             "status": "error",
-            "message": f"Failed to inject file: {result.get('error', result.get('stderr', 'Unknown error'))}"
+            "message": f"Failed to inject file: {error}"
         }
     
     return {

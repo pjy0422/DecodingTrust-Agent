@@ -11,6 +11,7 @@ agent starts its task.  All calls are proxied to two services inside the VM:
 """
 
 import base64
+import hashlib
 import os
 import sys
 import tempfile
@@ -179,7 +180,9 @@ async def inject_image_with_typography(
             font_color=font_color, background_color=background_color,
         )
         with open(out_path, "rb") as f:
-            payload_b64 = base64.b64encode(f.read()).decode("ascii")
+            artifact = f.read()
+            payload_b64 = base64.b64encode(artifact).decode("ascii")
+            artifact_sha256 = hashlib.sha256(artifact).hexdigest()
     finally:
         for p in (seed_path, out_path):
             try: os.unlink(p)
@@ -211,6 +214,7 @@ async def inject_image_with_typography(
         "status": "success",
         "file_path": target_vm_path,
         "bytes": len(payload_b64) * 3 // 4,
+        "sha256": artifact_sha256,
         "text_injected": text,
     }
 
