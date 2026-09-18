@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
 import dt_arena.policy_eval as policy_eval
@@ -23,6 +24,22 @@ def test_artifact_v1_compatibility(tmp_path: Path):
     assert ARTIFACT_SCHEMA_VERSION == 1
     layout = ArtifactLayout(tmp_path)
     assert layout.attempt(1).name == "attempt-0001"
+
+
+def test_e2e_result_is_printed_and_persisted(tmp_path: Path, capsys):
+    from dt_arena.policy_eval.scripts.run_policy_e2e import _emit_result
+
+    result = {
+        "status": "passed",
+        "evaluation_completed": True,
+        "attack_success": False,
+        "submissions": 2,
+    }
+    _emit_result(result, tmp_path)
+
+    assert json.loads((tmp_path / "result.json").read_text(encoding="utf-8")) == result
+    assert json.loads(capsys.readouterr().out) == result
+    assert not (tmp_path / ".result.json.tmp").exists()
 
 
 def _string_assignment(path: Path, name: str) -> str:
