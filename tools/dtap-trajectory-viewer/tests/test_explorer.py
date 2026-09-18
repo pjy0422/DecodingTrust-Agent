@@ -4,6 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+from dtap_traj.bundle import load_episode_bundle
 from dtap_traj.db import TrajectoryDB
 from dtap_traj.indexer import discover_episode_dirs, extract_episode_metadata, index_root
 from dtap_traj.server import create_app
@@ -166,6 +167,28 @@ def matrix(tmp_path: Path) -> Path:
             i += 1
             write_episode(root, domain, threat, i, attack=i in {1, 2, 24})
     return root
+
+
+def test_direct_run_without_result_uses_trusted_judge_verdict(tmp_path):
+    root = tmp_path / "artifacts" / "direct-run"
+    episode = write_episode(root, "browser", "direct", 7, attack=False)
+    (episode / "result.json").unlink()
+
+    metadata = extract_episode_metadata(episode, root)
+    assert metadata["attack_success"] is False
+    assert metadata["evaluation_completed"] is True
+
+    bundle = load_episode_bundle(episode)
+    assert bundle["evaluation"]["attack_success"] is False
+    assert bundle["evaluation"]["evaluation_completed"] is True
+
+    db = TrajectoryDB(tmp_path / "stale.sqlite3")
+    db.upsert_episode({**metadata, "attack_success": None, "evaluation_completed": None})
+    indexed = index_root(root, db)
+    assert indexed["updated"] == 1
+    refreshed = db.get_episode(metadata["episode_id"])
+    assert refreshed["attack_success"] is False
+    assert refreshed["evaluation_completed"] is True
 
 
 def test_index_24_case_matrix_and_filters(tmp_path):
@@ -401,6 +424,10 @@ def test_attack_filter_distinguishes_failed_from_not_evaluated(tmp_path):
     payload = json.loads(missing.read_text())
     payload["attack_success"] = None
     missing.write_text(json.dumps(payload))
+    # A genuinely unevaluated artifact has no trusted judge output. Keeping a
+    # false verdict here would mean evaluation completed and the attack failed.
+    (missing.parent / "judge-result.json").unlink()
+    (missing.parent / "judge-verdict.json").unlink()
     app = create_app(root, db_path=tmp_path / "outcomes.sqlite3")
     client = TestClient(app)
     assert client.get("/api/episodes", params={"attack_success": False}).json()["total"] == 21

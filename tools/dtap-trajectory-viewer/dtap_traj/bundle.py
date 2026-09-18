@@ -140,6 +140,11 @@ def load_episode_bundle(path: str | Path, *, attempt_index: int | None = None) -
         )
         if key in result
     }
+    verdict = judges.get("reward_firewall")
+    attack_success = verdict.get("attack_success") if isinstance(verdict, dict) else None
+    if "attack_success" not in evaluation and isinstance(attack_success, bool):
+        evaluation["attack_success"] = attack_success
+        evaluation.setdefault("evaluation_completed", True)
     if judges["raw"]:
         evaluation["judge"] = judges["raw"]
     elif judges["reward_firewall"]:

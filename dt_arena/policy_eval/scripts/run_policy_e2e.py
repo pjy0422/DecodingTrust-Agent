@@ -241,6 +241,17 @@ def _victim_artifacts_complete(runner: RecordingRunner, victim_agent_type: str) 
     return runner.exported_victim_traces >= 1
 
 
+def _emit_result(result: dict, artifacts_dir: Path | None) -> None:
+    """Print the final result and persist the artifact-v1 index record."""
+    rendered = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True)
+    if artifacts_dir is not None:
+        target = artifacts_dir / "result.json"
+        temporary = artifacts_dir / ".result.json.tmp"
+        temporary.write_text(rendered + "\n", encoding="utf-8")
+        os.replace(temporary, target)
+    print(rendered)
+
+
 async def _main(args) -> None:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise RuntimeError("export ANTHROPIC_API_KEY")
@@ -551,58 +562,52 @@ async def _main(args) -> None:
                 )
                 raise RuntimeError(f"artifact export found no {kind}")
             BenchmarkIntegrityGuard.verify(snapshot.task_dir, snapshot.benchmark_manifest)
-            print(
-                json.dumps(
-                    {
-                        "status": "passed",
-                        "evaluation_completed": True,
-                        "failure_class": None,
-                        "episode_id": credentials.public_episode_id,
-                        "plan_generated": True,
-                        "policy_model": args.policy_model,
-                        "victim_model": args.victim_model,
-                        "generated_plan": final_plan,
-                        "generated_plans": runner.plans,
-                        "matches_source_template": matches_source_template,
-                        "attack_success": runtime.status is EpisodeStatus.SUCCEEDED,
-                        "episode_status": runtime.status.value,
-                        "submissions": runtime.victim_runs_started,
-                        "victim_runs": runtime.victim_runs_started,
-                        "placement_actions": placement.applied_actions if placement else 0,
-                        "placements_verified": placement.verified_actions if placement else 0,
-                        "environment_steps": environment_steps,
-                        "action_applied": bool(
-                            environment_steps == 0
-                            or not args.placement_enabled
-                            or (placement is not None and placement.applied_actions >= environment_steps)
-                        ),
-                        "environment_tools": environment_tools,
-                        "placement_applicable": environment_steps > 0,
-                        "placement_covered": bool(
-                            environment_steps > 0
-                            and placement is not None
-                            and placement.verified_actions >= environment_steps
-                        ),
-                        "placement_verified": bool(
-                            environment_steps > 0
-                            and placement is not None
-                            and placement.verified_actions >= environment_steps
-                        ),
-                        "victim_completed": True,
-                        "judge_completed": True,
-                        "victim_agent_type": args.victim_agent_type,
-                        "victim_mcp_events": runner.exported_victim_mcp_events,
-                        "judge_artifacts": runner.exported_judge_artifacts,
-                        "feedback_mode": feedback_mode.value,
-                        "reasoning_summary_enabled": args.reasoning_summary,
-                        "digestor_usage": (digest_completer.usage.to_dict() if digest_completer else None),
-                        "artifacts_dir": str(artifacts_dir) if artifacts_dir else None,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                    sort_keys=True,
-                )
-            )
+            result = {
+                "status": "passed",
+                "evaluation_completed": True,
+                "failure_class": None,
+                "episode_id": credentials.public_episode_id,
+                "plan_generated": True,
+                "policy_model": args.policy_model,
+                "victim_model": args.victim_model,
+                "generated_plan": final_plan,
+                "generated_plans": runner.plans,
+                "matches_source_template": matches_source_template,
+                "attack_success": runtime.status is EpisodeStatus.SUCCEEDED,
+                "episode_status": runtime.status.value,
+                "submissions": runtime.victim_runs_started,
+                "victim_runs": runtime.victim_runs_started,
+                "placement_actions": placement.applied_actions if placement else 0,
+                "placements_verified": placement.verified_actions if placement else 0,
+                "environment_steps": environment_steps,
+                "action_applied": bool(
+                    environment_steps == 0
+                    or not args.placement_enabled
+                    or (placement is not None and placement.applied_actions >= environment_steps)
+                ),
+                "environment_tools": environment_tools,
+                "placement_applicable": environment_steps > 0,
+                "placement_covered": bool(
+                    environment_steps > 0
+                    and placement is not None
+                    and placement.verified_actions >= environment_steps
+                ),
+                "placement_verified": bool(
+                    environment_steps > 0
+                    and placement is not None
+                    and placement.verified_actions >= environment_steps
+                ),
+                "victim_completed": True,
+                "judge_completed": True,
+                "victim_agent_type": args.victim_agent_type,
+                "victim_mcp_events": runner.exported_victim_mcp_events,
+                "judge_artifacts": runner.exported_judge_artifacts,
+                "feedback_mode": feedback_mode.value,
+                "reasoning_summary_enabled": args.reasoning_summary,
+                "digestor_usage": (digest_completer.usage.to_dict() if digest_completer else None),
+                "artifacts_dir": str(artifacts_dir) if artifacts_dir else None,
+            }
+            _emit_result(result, artifacts_dir)
         finally:
             server_task.cancel()
             with suppress(asyncio.CancelledError):

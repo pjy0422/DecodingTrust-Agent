@@ -369,6 +369,21 @@ def extract_episode_metadata(
     run_summary, run_summary_path = _run_summary(path, root)
     victim_task_id, victim_trace_model, victim_usage = _victim_trace_metadata(path / "victim-trajectory.json")
     attempt_count, h1_attack_success, h2_attack_success = _attempt_outcomes(path, result)
+    attack_success = result.get("attack_success")
+    if not isinstance(attack_success, bool):
+        attack_success = _attack_outcome(path)
+    if not isinstance(attack_success, bool):
+        attack_success = next(
+            (value for value in (h2_attack_success, h1_attack_success) if isinstance(value, bool)),
+            None,
+        )
+    if isinstance(attack_success, bool):
+        merged["attack_success"] = attack_success
+        if not isinstance(merged.get("evaluation_completed"), bool):
+            # A trusted judge verdict can only exist after evaluation reached
+            # the reward boundary, even in legacy direct-run artifacts that
+            # predate result.json persistence.
+            merged["evaluation_completed"] = True
 
     rel_parts = relative.parts
     domain = merged.get("domain")
@@ -452,6 +467,8 @@ def index_root(root: str | Path, db: TrajectoryDB) -> dict[str, Any]:
                     "attempt_count",
                     "h1_attack_success",
                     "h2_attack_success",
+                    "attack_success",
+                    "evaluation_completed",
                 )
             )
         ):
