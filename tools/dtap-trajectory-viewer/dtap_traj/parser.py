@@ -270,7 +270,7 @@ def parse_victim_timeline(trace_path: str | Path) -> list[dict[str, Any]]:
 
 
 def parse_victim_mcp_events(trace_path: str | Path) -> list[dict[str, Any]]:
-    """Parse the proxy-owned redacted tool audit stream."""
+    """Parse proxy MCP events (raw in schema v2, digest-only in legacy logs)."""
     timeline: list[dict[str, Any]] = []
     for line in Path(trace_path).read_text(encoding="utf-8", errors="ignore").splitlines():
         try:
@@ -292,19 +292,32 @@ def parse_victim_mcp_events(trace_path: str | Path) -> list[dict[str, Any]]:
                 {
                     "kind": "tool_call",
                     "args": event.get("arguments") or {},
+                    "arguments_redacted": event.get("arguments_redacted"),
                     "arguments_digest": event.get("arguments_digest"),
                     **common,
                 }
             )
         elif event.get("type") == "tool.completed":
+            raw_result = event.get("result")
+            if raw_result is None:
+                result_text = (
+                    f"{common['server']}:{common['tool']} completed; "
+                    f"is_error={bool(event.get('is_error'))}; "
+                    f"result_sha256={event.get('result_digest', '')}"
+                )
+            else:
+                result_text = json.dumps(
+                    raw_result,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                    default=str,
+                )
             timeline.append(
                 {
                     "kind": "tool_result",
-                    "text": (
-                        f"{common['server']}:{common['tool']} completed; "
-                        f"is_error={bool(event.get('is_error'))}; "
-                        f"result_sha256={event.get('result_digest', '')}"
-                    ),
+                    "text": result_text,
+                    "result": raw_result,
                     "is_error": bool(event.get("is_error")),
                     "result_digest": event.get("result_digest"),
                     **common,

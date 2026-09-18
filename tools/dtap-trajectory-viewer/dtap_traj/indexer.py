@@ -236,7 +236,7 @@ def _policy_trace_model(path: Path) -> str | None:
 
 def _victim_trace_metadata(
     path: Path,
-) -> tuple[str | None, str | None, dict[str, Any] | None]:
+) -> tuple[str | None, str | None, str | None, dict[str, Any] | None]:
     value = _json(path)
     task_id = _text(_nested(value, "task_info", "task_id"))
     model = next(
@@ -253,7 +253,21 @@ def _victim_trace_metadata(
         None,
     )
     usage = _nested(value, "traj_info", "metadata", "token_usage") or _nested(value, "traj_info", "metadata", "usage")
-    return task_id, model, normalize_usage(usage)
+    agent_type = next(
+        (
+            found
+            for candidate in (
+                value.get("victim_agent_type"),
+                value.get("agent_type"),
+                _nested(value, "traj_info", "agent_type"),
+                _nested(value, "traj_info", "metadata", "agent_type"),
+                _nested(value, "traj_info", "metadata", "framework"),
+            )
+            if (found := _text(candidate))
+        ),
+        None,
+    )
+    return task_id, model, agent_type, normalize_usage(usage)
 
 
 def _attack_outcome(path: Path) -> bool | None:
@@ -367,7 +381,9 @@ def extract_episode_metadata(
     manifest = _json(path / "episode-manifest.json")
     merged = {**manifest, **result}
     run_summary, run_summary_path = _run_summary(path, root)
-    victim_task_id, victim_trace_model, victim_usage = _victim_trace_metadata(path / "victim-trajectory.json")
+    victim_task_id, victim_trace_model, victim_trace_agent_type, victim_usage = (
+        _victim_trace_metadata(path / "victim-trajectory.json")
+    )
     attempt_count, h1_attack_success, h2_attack_success = _attempt_outcomes(path, result)
     attack_success = result.get("attack_success")
     if not isinstance(attack_success, bool):
@@ -411,6 +427,11 @@ def extract_episode_metadata(
         or _policy_trace_model(path / "policy.jsonl")
     )
     victim_model = _text(merged.get("victim_model")) or _text(run_summary.get("victim_model")) or victim_trace_model
+    victim_agent_type = (
+        _text(merged.get("victim_agent_type"))
+        or _text(run_summary.get("victim_agent_type"))
+        or victim_trace_agent_type
+    )
     dataset_path = _dataset_path(merged, domain, threat)
     policy_events, policy_usage = _policy_metrics(path / "policy.jsonl") if include_event_counts else (None, None)
 
@@ -421,6 +442,7 @@ def extract_episode_metadata(
         "dataset_path": dataset_path,
         "policy_model": policy_model,
         "victim_model": victim_model,
+        "victim_agent_type": victim_agent_type,
         "policy_usage": policy_usage,
         "victim_usage": victim_usage,
         "attempt_count": attempt_count,
@@ -464,6 +486,7 @@ def index_root(root: str | Path, db: TrajectoryDB) -> dict[str, Any]:
                     "dataset_path",
                     "policy_model",
                     "victim_model",
+                    "victim_agent_type",
                     "attempt_count",
                     "h1_attack_success",
                     "h2_attack_success",

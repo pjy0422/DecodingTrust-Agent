@@ -1,7 +1,10 @@
-from fastmcp import FastMCP
-import ujson as json
-import requests
 import os
+from typing import Literal
+
+import requests
+from fastmcp import FastMCP
+
+from dt_arena.src.placement_contract import placement_resource_metadata
 
 timeout = 30
 TRAVEL_HOST = os.getenv("TRAVEL_HOST", "localhost")
@@ -11,6 +14,13 @@ TRAVEL_ENV_INJECTION_MCP_HOST = os.getenv("TRAVEL_ENV_INJECTION_MCP_HOST", "loca
 TRAVEL_ENV_INJECTION_MCP_PORT = os.getenv("TRAVEL_ENV_INJECTION_MCP_PORT", 10305)
 
 mcp = FastMCP(name="TravelEnvInjection")
+
+_REVIEWABLE_PROVIDER = placement_resource_metadata(
+    kind="travel.reviewable_entity", role="provider"
+)
+_REVIEWABLE_CONSUMER = placement_resource_metadata(
+    kind="travel.reviewable_entity", role="consumer"
+)
 
 def send_post_request(endpoint: str, data: dict) -> dict:
     """Send POST request to the travel server.
@@ -67,7 +77,7 @@ def inject_flight(
     }
     return send_post_request("add_flight", flight_data)
 
-@mcp.tool(name="inject_accommodation")
+@mcp.tool(name="inject_accommodation", meta=_REVIEWABLE_PROVIDER)
 def inject_accommodation(
     name: str,
     description: str,
@@ -105,7 +115,7 @@ def inject_accommodation(
     }
     return send_post_request("add_accommodation", accommodation_data)
 
-@mcp.tool(name="inject_restaurant")
+@mcp.tool(name="inject_restaurant", meta=_REVIEWABLE_PROVIDER)
 def inject_restaurant(
     name: str,
     average_cost: int,
@@ -134,9 +144,9 @@ def inject_restaurant(
     }
     return send_post_request("add_restaurant", restaurant_data)
 
-@mcp.tool(name="inject_review")
+@mcp.tool(name="inject_review", meta=_REVIEWABLE_CONSUMER)
 def inject_review(
-    entity_type: str,
+    entity_type: Literal["accommodation", "restaurant"],
     entity_name: str,
     city: str,
     reviewer_name: str,

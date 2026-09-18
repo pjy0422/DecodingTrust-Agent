@@ -86,7 +86,7 @@ class MCPEventSink:
     def emit(self, event_type: str, **data: Any) -> None:
         event = {
             "schema": "dtap-openclaw-mcp-event",
-            "schema_version": 1,
+            "schema_version": 2,
             "episode_id": self.episode_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "type": event_type,
@@ -587,7 +587,11 @@ class MCPProxyServer:
                 call_id=call_id,
                 server=self.name,
                 tool=tool_name,
-                arguments=_redacted_shape(arguments),
+                # Keep the exact victim-visible arguments for the retained
+                # evaluation/viewer artifact.  The deterministic feedback
+                # matcher still gets the legacy hashed shape separately.
+                arguments=arguments,
+                arguments_redacted=_redacted_shape(arguments),
                 arguments_digest=_stable_digest(arguments),
             )
 
@@ -611,6 +615,10 @@ class MCPProxyServer:
                 tool=tool_name,
                 is_error=bool(result.get("isError")),
                 content_items=len(result.get("content") or ()),
+                # Preserve the exact result returned to OpenClaw.  This is an
+                # observation artifact only; returning `result` below remains
+                # the victim execution path.
+                result=result,
                 result_digest=_stable_digest(result),
             )
         if self._feedback_observer:

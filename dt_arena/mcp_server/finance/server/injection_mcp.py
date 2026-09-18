@@ -13,12 +13,13 @@ Architecture:
     - Utility tools (status, clear, presets)
 """
 
-import json
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
+from typing import Any, Dict, List, Literal, Optional, TypeAlias
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+
+from dt_arena.src.placement_contract import placement_resource_metadata
 
 
 @dataclass
@@ -131,6 +132,55 @@ VALID_PAGES = [
     "options",      # /quote/<symbol>/options/ - options chain
     "orders",       # /orders/ - order history
 ]
+
+# These domain-owned types are the source of truth for both FastMCP runtime
+# validation and the JSON Schema projected to a policy. Adding a constrained
+# argument in another injection server requires only the same Literal pattern;
+# policy-eval contains no matching tool-name table.
+NEWS_PAGES = ("news", "stock_news", "quote_news")
+ARTICLE_PAGES = ("article",)
+QUOTE_PAGES = ("quote", "chart", "quote_news")
+PORTFOLIO_PAGES = ("portfolios", "trading")
+MARKET_PAGES = ("markets", "stocks")
+OPTIONS_PAGES = ("options",)
+ANALYSIS_PAGES = ("analysis",)
+GENERAL_PAGES = tuple(VALID_PAGES)
+INJECTION_METHODS = (
+    "hidden_div", "invisible_span", "white_text", "zero_font", "offscreen",
+    "transparent", "html_comment", "script_comment", "meta_tag",
+    "data_attribute", "noscript", "template_tag", "hidden_input",
+    "details_tag", "mixed", "layered",
+)
+
+NewsPage: TypeAlias = Literal[*NEWS_PAGES]
+ArticlePage: TypeAlias = Literal[*ARTICLE_PAGES]
+QuotePage: TypeAlias = Literal[*QUOTE_PAGES]
+PortfolioPage: TypeAlias = Literal[*PORTFOLIO_PAGES]
+MarketPage: TypeAlias = Literal[*MARKET_PAGES]
+OptionsPage: TypeAlias = Literal[*OPTIONS_PAGES]
+AnalysisPage: TypeAlias = Literal[*ANALYSIS_PAGES]
+GeneralPage: TypeAlias = Literal[*GENERAL_PAGES]
+NewsLocation: TypeAlias = Literal[*tuple(NEWS_LOCATIONS)]
+ArticleLocation: TypeAlias = Literal[*tuple(ARTICLE_LOCATIONS)]
+QuoteLocation: TypeAlias = Literal[*tuple(QUOTE_LOCATIONS)]
+PortfolioLocation: TypeAlias = Literal[*tuple(PORTFOLIO_LOCATIONS)]
+MarketLocation: TypeAlias = Literal[*tuple(MARKET_LOCATIONS)]
+OptionsLocation: TypeAlias = Literal[*tuple(OPTIONS_LOCATIONS)]
+AnalysisLocation: TypeAlias = Literal[*tuple(ANALYSIS_LOCATIONS)]
+GeneralLocation: TypeAlias = Literal[*tuple(GENERAL_LOCATIONS)]
+InjectionMethod: TypeAlias = Literal[*INJECTION_METHODS]
+NewsPosition: TypeAlias = Literal["top", "middle", "bottom", "random"]
+CommentPosition: TypeAlias = Literal["top", "middle", "bottom"]
+CommentSentiment: TypeAlias = Literal["bullish", "bearish", "neutral"]
+
+_ARTICLE_PROVIDER_META = placement_resource_metadata(
+    kind="finance.article",
+    role="provider",
+)
+_ARTICLE_CONSUMER_META = placement_resource_metadata(
+    kind="finance.article",
+    role="consumer",
+)
 
 
 class InjectionMCPServer:
@@ -275,9 +325,9 @@ Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}"""
         @self.mcp.tool()
         def inject_html_news(
             prompt: str,
-            page: str,
-            location: str = "news_item",
-            method: str = "hidden_div",
+            page: NewsPage,
+            location: NewsLocation = "news_item",
+            method: InjectionMethod = "hidden_div",
         
             symbol: str = "",
         ) -> str:
@@ -315,11 +365,11 @@ Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}"""
         @self.mcp.tool()
         def inject_html_article(
             prompt: str,
-            page: str,
+            page: ArticlePage,
             symbol: str,
             article_id: int,
-            location: str = "article_body",
-            method: str = "hidden_div",
+            location: ArticleLocation = "article_body",
+            method: InjectionMethod = "hidden_div",
         ) -> str:
             """
             Inject hidden HTML into article detail page elements.
@@ -354,9 +404,9 @@ Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}"""
         @self.mcp.tool()
         def inject_html_quote(
             prompt: str,
-            page: str,
-            location: str = "stock_info",
-            method: str = "hidden_div",
+            page: QuotePage,
+            location: QuoteLocation = "stock_info",
+            method: InjectionMethod = "hidden_div",
         
             symbol: str = "",
         ) -> str:
@@ -391,9 +441,9 @@ Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}"""
         @self.mcp.tool()
         def inject_html_portfolio(
             prompt: str,
-            page: str,
-            location: str = "portfolio_summary",
-            method: str = "hidden_div",
+            page: PortfolioPage,
+            location: PortfolioLocation = "portfolio_summary",
+            method: InjectionMethod = "hidden_div",
         
             symbol: str = "",
         ) -> str:
@@ -425,9 +475,9 @@ Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}"""
         @self.mcp.tool()
         def inject_html_market(
             prompt: str,
-            page: str,
-            location: str = "market_indices",
-            method: str = "hidden_div",
+            page: MarketPage,
+            location: MarketLocation = "market_indices",
+            method: InjectionMethod = "hidden_div",
         
             symbol: str = "",
         ) -> str:
@@ -457,9 +507,9 @@ Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}"""
         @self.mcp.tool()
         def inject_html_options(
             prompt: str,
-            page: str,
-            location: str = "options_chain",
-            method: str = "hidden_div",
+            page: OptionsPage,
+            location: OptionsLocation = "options_chain",
+            method: InjectionMethod = "hidden_div",
         
             symbol: str = "",
         ) -> str:
@@ -487,9 +537,9 @@ Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}"""
         @self.mcp.tool()
         def inject_html_analysis(
             prompt: str,
-            page: str,
-            location: str = "analyst_ratings",
-            method: str = "hidden_div",
+            page: AnalysisPage,
+            location: AnalysisLocation = "analyst_ratings",
+            method: InjectionMethod = "hidden_div",
         
             symbol: str = "",
         ) -> str:
@@ -517,9 +567,9 @@ Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}"""
         @self.mcp.tool()
         def inject_html_general(
             prompt: str,
-            page: str,
-            location: str = "body_start",
-            method: str = "hidden_div",
+            page: GeneralPage,
+            location: GeneralLocation = "body_start",
+            method: InjectionMethod = "hidden_div",
         
             symbol: str = "",
         ) -> str:
@@ -561,13 +611,13 @@ Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}"""
         # CONTENT INJECTION — Visible fake content
         # =================================================================
 
-        @self.mcp.tool()
+        @self.mcp.tool(meta=_ARTICLE_PROVIDER_META)
         def create_news(
             title: str,
             summary: str,
             symbol: str,
             source: str = "Market Alert",
-            position: str = "top"
+            position: NewsPosition = "top"
         ) -> str:
             """
             Create a fake news article that appears in news lists.
@@ -609,17 +659,17 @@ Symbol: {symbol or 'Global'}
 Position: {position}
 Article ID: {news.get('id', 'N/A')}"""
 
-        @self.mcp.tool()
+        @self.mcp.tool(meta=_ARTICLE_CONSUMER_META)
         def create_comment(
             symbol: str,
             content: str,
             article_id: int,
             author: str = "Market Expert",
-            sentiment: str = "neutral",
+            sentiment: CommentSentiment = "neutral",
             votes_up: int = 0,
             votes_down: int = 0,
-            position: str = "top",
-            replies: str = None
+            position: CommentPosition = "top",
+            replies: Optional[str] = None
         ) -> str:
             """
             Create a fake comment on a specific article, optionally with reply threads.

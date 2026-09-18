@@ -45,6 +45,7 @@ class AttemptWorkspace:
     task_dir: Path
     config_path: Path
     output_root: Path
+    placement_target_index: int | None = None
 
 
 def cleanup_episode_root(
@@ -233,9 +234,17 @@ def materialize_attempt_dir(
     steps: Sequence[ValidatedAttackStep],
     candidate_validator: Callable[..., ValidatedCandidateConfig] | None = None,
     source_manifest: BenchmarkManifest | None = None,
+    placement_target_index: int | None = None,
 ) -> AttemptWorkspace:
     if isinstance(attempt_index, bool) or not isinstance(attempt_index, int) or attempt_index < 1:
         raise CandidateConfigError("attempt_index must be a positive integer")
+    if placement_target_index is not None and (
+        isinstance(placement_target_index, bool)
+        or not isinstance(placement_target_index, int)
+        or placement_target_index < 0
+        or placement_target_index >= len(steps)
+    ):
+        raise CandidateConfigError("placement_target_index is out of range")
     source_input = Path(source_task_dir)
     if source_input.is_symlink():
         raise CandidateConfigError("source task directory may not be a symlink")
@@ -283,4 +292,5 @@ def materialize_attempt_dir(
         task_dir=destination,
         config_path=destination / "config.yaml",
         output_root=attempt_dir / "results",
+        placement_target_index=placement_target_index,
     )

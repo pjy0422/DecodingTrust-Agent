@@ -131,6 +131,12 @@ function attackLabel(value, compact=false){
 }
 function count(value){ return value===null||value===undefined?'—':Number(value).toLocaleString(); }
 function taskLabel(ep){ return ep.dataset_path||ep.task_id||ep.episode_id; }
+function harnessLabel(value){
+  if(!value) return 'not recorded';
+  const normalized=String(value).trim().toLowerCase().replaceAll('-','_');
+  const labels={openclaw:'OpenClaw',openai_sdk:'OpenAI SDK',claude_code:'Claude Code',hermes:'Hermes'};
+  return labels[normalized]||String(value);
+}
 function tokenMetrics(actor, usage){
   if(!usage) return `<span class="metric">${actor} tokens <b>not recorded</b></span>`;
   const approximate=usage.reasoning_source==='stream_estimate';
@@ -171,7 +177,7 @@ function episodeRow(ep){
     <div class="ep-top"><span class="domain">${esc(ep.domain||'unknown')}</span><span class="threat">${esc(ep.threat_model||'—')}</span></div>
     <div class="ep-id" title="${esc(taskLabel(ep))}">${esc(taskLabel(ep))}</div>
     <div class="ep-run" title="${esc(ep.episode_id)}">${esc(ep.run_name||'run')} · episode ${esc(ep.episode_id)}</div>
-    <div class="ep-meta"><span class="${attackClass}"><i class="dot"></i>${attackText}</span><span>${count(ep.policy_events)} policy tool calls</span><span>${count(ep.victim_events)} victim steps</span></div>
+    <div class="ep-meta"><span class="${attackClass}"><i class="dot"></i>${attackText}</span><span>${esc(harnessLabel(ep.victim_agent_type))}</span><span>${count(ep.policy_events)} policy tool calls</span><span>${count(ep.victim_events)} victim steps</span></div>
   </div>`;
 }
 function listPane(){
@@ -187,7 +193,7 @@ function detailShell(){
   return `<main class="detail"><div class="detailhead">
       <div class="detail-title"><h1>${esc(taskLabel(ep))}</h1><span class="badge">${esc(ep.domain||'unknown')}</span><span class="badge">${esc(ep.threat_model||'unknown')}</span><span class="badge">${esc(ep.status||ep.episode_status||'unknown')}</span></div>
       <div class="episode-ref">run ${esc(ep.run_name||'unknown')} · config task ${esc(ep.task_id||'not recorded')} · internal episode ${esc(ep.episode_id)}</div>
-      <div class="metrics"><span class="metric">policy model <b>${esc(ep.policy_model||'not recorded')}</b></span><span class="metric">victim model <b>${esc(ep.victim_model||'not recorded')}</b></span><span class="metric">policy tool calls <b>${count(ep.policy_events)}</b></span><span class="metric">victim steps <b>${count(ep.victim_events)}</b></span><span class="metric">placements verified <b>${count(ep.placements_verified??0)}</b></span><span class="metric">attack judge <b class="${attackClass}">${attackText}</b></span>${tokenMetrics('policy',ep.policy_usage)}<span class="victim-token-summary">${tokenMetrics('victim',ep.victim_usage)}</span></div>
+      <div class="metrics"><span class="metric">policy model <b>${esc(ep.policy_model||'not recorded')}</b></span><span class="metric">victim model <b>${esc(ep.victim_model||'not recorded')}</b></span><span class="metric">victim harness <b>${esc(harnessLabel(ep.victim_agent_type))}</b></span><span class="metric">policy tool calls <b>${count(ep.policy_events)}</b></span><span class="metric">victim steps <b>${count(ep.victim_events)}</b></span><span class="metric">placements verified <b>${count(ep.placements_verified??0)}</b></span><span class="metric">attack judge <b class="${attackClass}">${attackText}</b></span>${tokenMetrics('policy',ep.policy_usage)}<span class="victim-token-summary">${tokenMetrics('victim',ep.victim_usage)}</span></div>
     </div><div class="tabs">${['policy','victim','combined','judges','config'].map(t=>`<button data-tab="${t}" class="${state.tab===t?'active':''}">${t==='config'?'Config Diff':t==='judges'?'DTAP Judges':t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div><div class="viewer" id="viewer"></div></main>`;
 }
 function eventCard(e,i){

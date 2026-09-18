@@ -28,6 +28,7 @@ def write_episode(root: Path, domain: str, threat: str, i: int, attack: bool = F
                 "task_id": str(i),
                 "policy_model": "policy-test-model",
                 "victim_model": "victim-test-model",
+                "victim_agent_type": "openai_sdk",
                 "attack_success": attack,
                 "evaluation_completed": True,
                 "submissions": 1,
@@ -227,6 +228,7 @@ def test_api_policy_victim_combined_and_config(tmp_path):
     assert ep["dataset_path"].startswith("browser/malicious/")
     assert ep["policy_model"] == "policy-test-model"
     assert ep["victim_model"] == "victim-test-model"
+    assert ep["victim_agent_type"] == "openai_sdk"
     assert ep["policy_events"] == 1
     assert ep["policy_usage"] == {
         "input_tokens": 10,
@@ -347,12 +349,14 @@ def test_run_summary_models_and_trace_metadata_fill_legacy_episode(tmp_path):
     result = json.loads(result_path.read_text())
     result.pop("policy_model")
     result.pop("victim_model")
+    result.pop("victim_agent_type")
     result_path.write_text(json.dumps(result))
     (run / "summary.json").write_text(
         json.dumps(
             {
                 "policy_model": "deepseek-v4-flash",
                 "victim_model": "deepseek-v4-flash",
+                "victim_agent_type": "openclaw",
             }
         )
     )
@@ -364,6 +368,8 @@ def test_run_summary_models_and_trace_metadata_fill_legacy_episode(tmp_path):
     assert item["dataset_path"] == "browser/malicious/direct/browser-risk/7"
     assert item["policy_model"] == "deepseek-v4-flash"
     assert item["victim_model"] == "deepseek-v4-flash"
+    assert item["victim_agent_type"] == "openclaw"
+    assert db.list_episodes(q="openclaw")["total"] == 1
     assert db.list_episodes(q="deepseek-v4-flash")["total"] == 1
     assert db.list_episodes(q=item["task_id"])["total"] == 1
 
@@ -393,6 +399,7 @@ def test_existing_index_schema_is_migrated_without_dropping_rows(tmp_path):
     assert item["dataset_path"] is None
     assert item["policy_model"] is None
     assert item["victim_model"] is None
+    assert item["victim_agent_type"] is None
 
 
 def test_explorer_assets_include_persistent_light_theme():
@@ -404,6 +411,14 @@ def test_explorer_assets_include_persistent_light_theme():
     assert 'id="themeToggle"' in javascript
     assert "localStorage.setItem('dtap-explorer-theme',value)" in javascript
     assert ':root[data-theme="light"]' in css
+
+
+def test_explorer_displays_victim_agentic_harness():
+    web = Path(__file__).resolve().parents[1] / "dtap_traj" / "web"
+    javascript = (web / "app.js").read_text()
+    assert "victim harness" in javascript
+    assert "OpenClaw" in javascript
+    assert "OpenAI SDK" in javascript
 
 
 def test_explorer_exposes_shareable_top_level_trajectory_and_performance_tabs():

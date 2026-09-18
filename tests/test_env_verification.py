@@ -248,7 +248,7 @@ class PlacementTests(unittest.IsolatedAsyncioTestCase):
             target = describe_placement_target(injection)
             self.assertIsNotNone(target)
             self.assertEqual(target.locator, locator)
-            self.assertEqual(target.repair_fields, fields)
+            self.assertEqual(target.locator_fields, fields)
 
     async def test_read_only_is_not_applicable(self):
         proof = await verify_placement(
@@ -961,7 +961,9 @@ class PlacementTests(unittest.IsolatedAsyncioTestCase):
                 [injection], [{**injection, "success": False}], {}, Docker([]))
         self.assertEqual(raised.exception.code, "INJECTION_FAILED")
         self.assertEqual(raised.exception.locator, "os-filesystem:/home/alice/a")
-        self.assertEqual(raised.exception.repair_fields, ("kwargs.file_path",))
+        self.assertEqual(raised.exception.locator_fields, ("kwargs.file_path",))
+        self.assertEqual(raised.exception.repair_fields, ())
+        self.assertFalse(raised.exception.retryable)
 
     async def test_mismatch_carries_only_the_submitted_target_hint(self):
         injection = {"server_name": "os-filesystem-injection", "tool_name": "inject_file",

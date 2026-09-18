@@ -13,6 +13,18 @@ class PolicyInputLimitError(ValueError):
     """An authenticated policy request exceeded a public resource limit."""
 
 
+def policy_max_turn_budget(max_submissions: int, requested: int | None = None) -> int:
+    """Scale the default Claude transport budget with the victim-execution horizon."""
+
+    if isinstance(max_submissions, bool) or not isinstance(max_submissions, int) or max_submissions < 1:
+        raise ValueError("max_submissions must be positive")
+    if requested is not None:
+        if isinstance(requested, bool) or not isinstance(requested, int) or requested < 1:
+            raise ValueError("requested policy max turns must be positive")
+        return requested
+    return max(64, 32 * max_submissions)
+
+
 _FORBIDDEN_CHILD_ENV_NAMES = frozenset(
     {
         "DTAP_EPISODE_TOKEN",

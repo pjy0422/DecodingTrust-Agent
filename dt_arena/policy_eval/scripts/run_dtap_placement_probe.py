@@ -24,21 +24,28 @@ def _write_exclusive(path: Path, payload: dict) -> None:
         json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
 
 
-async def _main(task_dir: Path, result_path: Path) -> int:
+async def _main(task_dir: Path, result_path: Path, target_step_index: int) -> int:
     try:
         result = await run(task_dir, strict=False)
         placements = result.get("placements") if isinstance(result, dict) else None
-        if not isinstance(placements, list) or len(placements) != 1:
+        if (
+            not isinstance(placements, list)
+            or target_step_index < 0
+            or target_step_index >= len(placements)
+        ):
             return 2
-        proof = placements[0]
+        proof = placements[target_step_index]
         status = proof.get("status")
         payload = {
-            "schema": "m6-placement-v1",
+            "schema": "m6-placement-v2",
             "applied": True,
             "valid": status == "verified",
             "status": status,
             "locator": proof.get("locator", ""),
             "code": "PLACEMENT_VERIFIED" if status == "verified" else "UNSUPPORTED_PLACEMENT",
+            "locator_fields": [],
+            "repair_fields": [],
+            "retryable": False,
         }
         _write_exclusive(result_path, payload)
         return 0
@@ -48,13 +55,15 @@ async def _main(task_dir: Path, result_path: Path) -> int:
         if not isinstance(exc, PlacementValidationError):
             return 2
         payload = {
-            "schema": "m6-placement-v1",
+            "schema": "m6-placement-v2",
             "applied": getattr(exc, "code", "") != "INJECTION_FAILED",
             "valid": False,
             "status": "invalid",
             "locator": str(getattr(exc, "locator", "")),
             "code": str(getattr(exc, "code", "PLACEMENT_MISMATCH")),
+            "locator_fields": list(getattr(exc, "locator_fields", ())),
             "repair_fields": list(getattr(exc, "repair_fields", ())),
+            "retryable": bool(getattr(exc, "retryable", False)),
         }
         _write_exclusive(result_path, payload)
         return 0
@@ -64,8 +73,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task-dir", type=Path, required=True)
     parser.add_argument("--result-path", type=Path, required=True)
+    parser.add_argument("--target-step-index", type=int, default=0)
     args = parser.parse_args()
-    return asyncio.run(_main(args.task_dir.resolve(), args.result_path.resolve()))
+    return asyncio.run(
+        _main(args.task_dir.resolve(), args.result_path.resolve(), args.target_step_index)
+    )
 
 
 if __name__ == "__main__":

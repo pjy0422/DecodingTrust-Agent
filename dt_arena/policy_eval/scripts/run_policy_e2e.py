@@ -9,13 +9,6 @@ from __future__ import annotations
 
 from dt_arena.policy_eval.harness import ClaudeCodeHarness, HarnessRequest
 from dt_arena.policy_eval.planning import PlanningContext, create_planning_strategy, planning_strategy_names
-from dt_arena.policy_eval.planning.current import (
-    CORE_POLICY_PROMPT,
-    CORE_POLICY_PROMPT_TEMPLATE,
-    PLACEMENT_POLICY_PROMPT,
-    PLACEMENT_POLICY_PROMPT_TEMPLATE,
-    build_policy_prompt,
-)
 
 import argparse
 import asyncio
@@ -52,7 +45,7 @@ from dt_arena.policy_eval.placement import DtapPlacementRunner, PlacementCoordin
 from dt_arena.policy_eval.policy_contract import PolicyContract, PolicyLeakageGuard
 from dt_arena.policy_eval.scheduler import AttemptScheduler
 from dt_arena.policy_eval.scripts.discover_live_view import live_view
-from dt_arena.policy_eval.security_policy import EvaluationSecurityPolicy
+from dt_arena.policy_eval.security_policy import EvaluationSecurityPolicy, policy_max_turn_budget
 from dt_arena.policy_eval.submission import SubmissionCoordinator
 from dt_arena.policy_eval.validation import ValidationContext
 
@@ -104,39 +97,34 @@ class RecordingRunner:
         self.exported_judge_artifacts = 0
         self.delegate_completed = False
 
-    def _export_artifacts(self, workspace) -> None:
+    def _export_artifacts(self, workspace, result=None) -> None:
         if self.artifacts_dir is None:
             return
         attempt_index = int(getattr(workspace, "attempt_index", len(self.plans)))
         attempt_dir = self.artifacts_dir / "attempts" / f"attempt-{attempt_index:04d}"
         attempt_dir.mkdir(parents=True, exist_ok=True)
         for name in ("judge_result.json", ".m4-verdict.json"):
-            candidates = sorted(workspace.output_root.rglob(name))
-            if candidates:
+            candidates = [
+                candidate
+                for candidate in workspace.output_root.rglob(name)
+                if candidate.is_file() and not candidate.is_symlink()
+            ]
+            if len(candidates) == 1:
                 output_name = "judge-result.json" if name == "judge_result.json" else "judge-verdict.json"
                 shutil.copy2(candidates[0], attempt_dir / output_name)
                 shutil.copy2(candidates[0], self.artifacts_dir / output_name)
                 self.exported_judge_artifacts += 1
-        for candidate in sorted(workspace.output_root.rglob("*.json")):
-            if candidate.name in {"judge_result.json", ".m4-verdict.json"}:
-                continue
-            try:
-                payload = json.loads(candidate.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if isinstance(payload, dict) and isinstance(payload.get("trajectory"), list):
-                shutil.copy2(candidate, attempt_dir / "victim-trajectory.json")
-                shutil.copy2(candidate, self.artifacts_dir / "victim-trajectory.json")
-                self.exported_victim_traces = 1
-                break
-        event_logs = sorted(
-            workspace.output_root.rglob("*.mcp-events.jsonl"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-        if event_logs:
-            shutil.copy2(event_logs[0], attempt_dir / "victim-mcp-events.jsonl")
-            shutil.copy2(event_logs[0], self.artifacts_dir / "victim-mcp-events.jsonl")
+
+        trajectory_source = getattr(result, "trajectory_path", None)
+        if trajectory_source is not None and trajectory_source.is_file():
+            shutil.copy2(trajectory_source, attempt_dir / "victim-trajectory.json")
+            shutil.copy2(trajectory_source, self.artifacts_dir / "victim-trajectory.json")
+            self.exported_victim_traces = 1
+
+        mcp_source = getattr(result, "mcp_events_path", None)
+        if mcp_source is not None and mcp_source.is_file():
+            shutil.copy2(mcp_source, attempt_dir / "victim-mcp-events.jsonl")
+            shutil.copy2(mcp_source, self.artifacts_dir / "victim-mcp-events.jsonl")
             self.exported_victim_mcp_events = 1
         diagnostic = workspace.output_root / ".dtap-stderr.log"
         if diagnostic.is_file():
@@ -173,12 +161,13 @@ class RecordingRunner:
             attempt_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(workspace.config_path, attempt_dir / "submitted-config.yaml")
             shutil.copy2(workspace.config_path, self.artifacts_dir / "submitted-config.yaml")
+        result = None
         try:
             result = await self.delegate.run(workspace)
             self.delegate_completed = True
             return result
         finally:
-            self._export_artifacts(workspace)
+            self._export_artifacts(workspace, result)
 
 
 def _free_port() -> int:
@@ -622,7 +611,12 @@ def main() -> None:
     parser.add_argument("--policy-model", default="glm-5.2")
     parser.add_argument("--victim-model", default="glm-5.2")
     parser.add_argument("--victim-agent-type", default="claudesdk")
-    parser.add_argument("--policy-max-turns", type=int, default=16)
+    parser.add_argument(
+        "--policy-max-turns",
+        type=int,
+        default=None,
+        help="Claude policy turn budget; defaults to max(64, 32 * H)",
+    )
     parser.add_argument("--victim-max-turns", type=int, default=80)
     parser.add_argument("--max-submissions", type=int, default=2)
     parser.add_argument(
@@ -661,6 +655,9 @@ def main() -> None:
     args.dtap_root = args.dtap_root.expanduser().resolve()
     if args.max_submissions < 1:
         parser.error("--max-submissions must be positive")
+    args.policy_max_turns = policy_max_turn_budget(
+        args.max_submissions, args.policy_max_turns
+    )
     asyncio.run(_main(args))
 
 

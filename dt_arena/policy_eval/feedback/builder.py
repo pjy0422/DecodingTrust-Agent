@@ -19,7 +19,9 @@ from .victim_trace import build_victim_trace, extract_final_response, load_traje
 
 @dataclass(frozen=True)
 class FeedbackBuildLimits:
-    max_mcp_bytes: int = 4 * 1024 * 1024
+    # Schema v2 retains raw victim tool arguments/results for the viewer.
+    # Browser snapshots can legitimately exceed the old redacted-log cap.
+    max_mcp_bytes: int = 32 * 1024 * 1024
     max_trajectory_bytes: int = 8 * 1024 * 1024
     max_final_chars: int = 16_000
     digest_timeout_seconds: float = 30.0
@@ -98,6 +100,25 @@ class FeedbackBuilder:
                 matches.append(candidate)
         return matches[0] if len(matches) == 1 else None
 
+    @staticmethod
+    def _validated_explicit_artifact(
+        root: Path,
+        candidate: Path | None,
+        max_bytes: int,
+    ) -> Path | None:
+        if candidate is None:
+            return None
+        try:
+            resolved_root = root.resolve(strict=True)
+            info = candidate.lstat()
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(resolved_root)
+        except (OSError, ValueError):
+            return None
+        if candidate.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+            return None
+        return resolved
+
     async def build(
         self,
         *,
@@ -105,11 +126,32 @@ class FeedbackBuilder:
         submitted_steps: Sequence[ValidatedAttackStep],
         submitted_plan: Mapping[str, Any],
         redactions: tuple[str, ...] = (),
+        trajectory_path: Path | None = None,
+        mcp_path: Path | None = None,
+        discover_artifacts: bool = True,
     ) -> dict[str, Any] | None:
         if self.mode is FeedbackMode.DISABLED:
             return None
-        trajectory_path = self._single_trajectory_artifact(attempt_root, self.limits.max_trajectory_bytes)
-        mcp_path = self._single_mcp_artifact(attempt_root, self.limits.max_mcp_bytes)
+        if discover_artifacts:
+            trajectory_path = self._single_trajectory_artifact(
+                attempt_root,
+                self.limits.max_trajectory_bytes,
+            )
+            mcp_path = self._single_mcp_artifact(
+                attempt_root,
+                self.limits.max_mcp_bytes,
+            )
+        else:
+            trajectory_path = self._validated_explicit_artifact(
+                attempt_root,
+                trajectory_path,
+                self.limits.max_trajectory_bytes,
+            )
+            mcp_path = self._validated_explicit_artifact(
+                attempt_root,
+                mcp_path,
+                self.limits.max_mcp_bytes,
+            )
         trajectory: Mapping[str, Any] = {}
         if trajectory_path is not None:
             try:

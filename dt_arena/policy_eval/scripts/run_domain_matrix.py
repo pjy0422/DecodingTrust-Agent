@@ -24,6 +24,7 @@ from dt_arena.policy_eval.benchmark_manifest import (
     THREAT_MODELS,
     matrix_cases,
 )
+from dt_arena.policy_eval.security_policy import policy_max_turn_budget
 
 
 def _failure_class(result: dict[str, Any]) -> str | None:
@@ -509,7 +510,12 @@ def main() -> None:
     parser.add_argument("--planning-strategy", default="current")
     parser.add_argument("--victim-model", default="deepseek-v4-flash")
     parser.add_argument("--victim-agent-type", default="openclaw")
-    parser.add_argument("--policy-max-turns", type=int, default=64)
+    parser.add_argument(
+        "--policy-max-turns",
+        type=int,
+        default=None,
+        help="Claude policy turn budget; defaults to max(64, 32 * H)",
+    )
     parser.add_argument("--victim-max-turns", type=int, default=80)
     parser.add_argument("--max-submissions", type=int, default=2)
     parser.add_argument(
@@ -525,6 +531,12 @@ def main() -> None:
     args = parser.parse_args()
     args.dtap_root = args.dtap_root.expanduser().resolve()
     args.artifacts_root = args.artifacts_root.expanduser().resolve()
+    try:
+        args.policy_max_turns = policy_max_turn_budget(
+            args.max_submissions, args.policy_max_turns
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     raise SystemExit(asyncio.run(_main(args)))
 
 

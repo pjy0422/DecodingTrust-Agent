@@ -249,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("path", help="run directory, victim trace, or policy stream-json")
     parser.add_argument("--victim-trace", help="explicit DTAP OpenClaw JSONL")
-    parser.add_argument("--victim-mcp-events", help="explicit redacted OpenClaw MCP proxy event JSONL")
+    parser.add_argument("--victim-mcp-events", help="explicit OpenClaw MCP proxy event JSONL")
     parser.add_argument("--policy-trace", help="explicit Claude policy stream-json JSONL")
     parser.add_argument("--policy-prompt", help="policy instruction text shown as the first event")
     parser.add_argument("--original-yaml", help="original benchmark config.yaml")

@@ -9,6 +9,11 @@ services:
     network_mode: host
     mem_limit: 768m
     cpus: 1.0
+    volumes:
+      # Keep generated content identities deterministic across the separate
+      # placement and victim containers. The published image still uses
+      # Python's process-salted hash() for auto-generated article ids.
+      - ../../mcp_server/finance/injection/content.py:/app/injection/content.py:ro
     environment:
       - FLASK_HOST=0.0.0.0
       - FLASK_PORT=${FINANCE_WEB_PORT:-5000}

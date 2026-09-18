@@ -10,7 +10,6 @@ import base64
 import hashlib
 import html
 import json
-import os
 import re
 import shlex
 import stat
@@ -32,16 +31,28 @@ class VerificationError(RuntimeError):
 class PlacementValidationError(VerificationError):
     """Structured, policy-safe placement failure.
 
-    The locator and repair fields are derived only from the submitted injection,
-    never from an unrestricted backend listing.
+    Locator fields describe how the submitted target was addressed. Repair
+    fields are a separate, conservative set that an adapter has positively
+    identified as actionable. Neither may come from an unrestricted backend
+    listing.
     """
 
-    def __init__(self, code: str, message: str, *, locator: str = "",
-                 repair_fields: Sequence[str] = ()):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        locator: str = "",
+        locator_fields: Sequence[str] = (),
+        repair_fields: Sequence[str] = (),
+        retryable: bool = False,
+    ):
         super().__init__(message)
         self.code = code
         self.locator = locator
+        self.locator_fields = tuple(locator_fields)
         self.repair_fields = tuple(repair_fields)
+        self.retryable = bool(retryable and self.repair_fields)
 
 
 class VerificationMode(str, Enum):
@@ -548,7 +559,7 @@ class PlacementProof:
 @dataclass(frozen=True)
 class PlacementTarget:
     locator: str
-    repair_fields: tuple[str, ...]
+    locator_fields: tuple[str, ...]
 
 
 def describe_placement_target(injection: Mapping[str, Any]) -> PlacementTarget | None:
@@ -1780,7 +1791,7 @@ async def verify_placement_batch(injections: Sequence[Mapping[str, Any]], result
             raise PlacementValidationError(
                 "INJECTION_FAILED", "the injection backend rejected the action",
                 locator=target.locator if target else "",
-                repair_fields=target.repair_fields if target else (),
+                locator_fields=target.locator_fields if target else (),
             )
         merged = dict(environ)
         merged.update((server_environments or {}).get(str(injection["server_name"]), {}))
@@ -1792,13 +1803,13 @@ async def verify_placement_batch(injections: Sequence[Mapping[str, Any]], result
             raise PlacementValidationError(
                 "PLACEMENT_MISMATCH", "read-back did not confirm the requested placement",
                 locator=target.locator if target else "",
-                repair_fields=target.repair_fields if target else (),
+                locator_fields=target.locator_fields if target else (),
             ) from exc
         if strict and proof.status is PlacementStatus.UNSUPPORTED:
             raise PlacementValidationError(
                 "UNSUPPORTED_PLACEMENT", "this injection tool has no placement adapter",
                 locator=target.locator if target else "",
-                repair_fields=target.repair_fields if target else (),
+                locator_fields=target.locator_fields if target else (),
             )
         proofs.append(proof)
     return tuple(proofs)

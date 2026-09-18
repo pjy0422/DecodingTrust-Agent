@@ -21,7 +21,7 @@ def test_proxy_event_sink_materializes_zero_call_trajectory(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_proxy_event_sink_records_redacted_call_and_result(tmp_path):
+async def test_proxy_event_sink_records_raw_and_redacted_call_and_result(tmp_path):
     path = tmp_path / "episode.mcp-events.jsonl"
     sink = MCPEventSink(path, "episode-public-1")
     proxy = MCPProxyServer(
@@ -39,23 +39,30 @@ async def test_proxy_event_sink_records_redacted_call_and_result(tmp_path):
     )
 
     assert result["isError"] is False
-    raw = path.read_text(encoding="utf-8")
-    assert secret not in raw
-    assert sandbox_path not in raw
-    assert "private backend result" not in raw
-    events = [json.loads(line) for line in raw.splitlines()]
+    events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert [event["type"] for event in events] == [
         "tool.started", "tool.completed"
     ]
     assert events[0]["episode_id"] == "episode-public-1"
-    assert events[0]["arguments"]["path"]["length"] == len(sandbox_path)
+    assert events[0]["schema_version"] == 2
+    assert events[0]["arguments"] == {
+        "token": secret,
+        "path": sandbox_path,
+        "limit": 3,
+    }
+    assert events[0]["arguments_redacted"]["path"]["length"] == len(sandbox_path)
+    assert events[0]["arguments_redacted"]["token"]["sha256"] != secret
     assert len(events[0]["arguments_digest"]) == 64
     assert events[1]["is_error"] is False
+    assert events[1]["result"] == {
+        "content": [{"type": "text", "text": "private backend result"}],
+        "isError": False,
+    }
     assert len(events[1]["result_digest"]) == 64
 
 
 @pytest.mark.asyncio
-async def test_proxy_event_sink_never_persists_secret_classes(tmp_path):
+async def test_proxy_event_sink_keeps_raw_values_separate_from_redacted_shape(tmp_path):
     path = tmp_path / "episode.mcp-events.jsonl"
     sink = MCPEventSink(path, "episode-public-2")
     proxy = MCPProxyServer(
@@ -72,14 +79,13 @@ async def test_proxy_event_sink_never_persists_secret_classes(tmp_path):
 
     await proxy._call_tool("read_file", secrets)
 
-    raw = path.read_text(encoding="utf-8")
-    assert all(secret not in raw for secret in secrets.values())
-    assert "private backend result" not in raw
-    events = [json.loads(line) for line in raw.splitlines()]
-    assert events[0]["arguments"].keys() == secrets.keys()
+    events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert events[0]["arguments"] == secrets
+    assert events[1]["result"]["content"][0]["text"] == "private backend result"
+    assert events[0]["arguments_redacted"].keys() == secrets.keys()
     assert all(
         set(shape) == {"type", "length", "sha256"}
-        for shape in events[0]["arguments"].values()
+        for shape in events[0]["arguments_redacted"].values()
     )
 
 
