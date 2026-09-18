@@ -216,6 +216,55 @@ def test_redacted_proxy_events_complete_detached_victim_timeline(tmp_path: Path)
     assert data["victim_mcp_events"] == str(events)
 
 
+def test_schema_v2_proxy_events_expose_raw_arguments_and_results(tmp_path: Path) -> None:
+    events = tmp_path / "victim-mcp-events.jsonl"
+    raw_arguments = {"query": "project alpha", "limit": 3}
+    raw_result = {
+        "content": [{"type": "text", "text": "raw browser snapshot"}],
+        "isError": False,
+    }
+    events.write_text(
+        _line(
+            {
+                "schema": "dtap-openclaw-mcp-event",
+                "schema_version": 2,
+                "type": "tool.started",
+                "call_id": "c2",
+                "server": "gmail",
+                "tool": "search_emails",
+                "arguments": raw_arguments,
+                "arguments_redacted": {
+                    "query": {"type": "string", "length": 13, "sha256": "a" * 64},
+                    "limit": {"type": "int", "sha256": "b" * 64},
+                },
+                "arguments_digest": "c" * 64,
+            }
+        )
+        + _line(
+            {
+                "schema": "dtap-openclaw-mcp-event",
+                "schema_version": 2,
+                "type": "tool.completed",
+                "call_id": "c2",
+                "server": "gmail",
+                "tool": "search_emails",
+                "is_error": False,
+                "result": raw_result,
+                "result_digest": "d" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = parse_victim_mcp_events(events)
+
+    assert parsed[0]["args"] == raw_arguments
+    assert parsed[0]["arguments_redacted"]["query"]["length"] == 13
+    assert parsed[1]["result"] == raw_result
+    assert "raw browser snapshot" in parsed[1]["text"]
+    assert "result_sha256=" not in parsed[1]["text"]
+
+
 def test_parses_framework_neutral_dtap_victim_trajectory(tmp_path: Path) -> None:
     victim = tmp_path / "victim-trajectory.json"
     victim.write_text(

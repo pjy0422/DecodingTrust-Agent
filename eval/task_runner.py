@@ -320,6 +320,13 @@ async def run_single_task(
             # Determine if we have env injections to apply per-turn
             has_env_injections = bool(all_env_injections) and bool(injection_server_urls)
 
+            # OpenClaw reuses one logical session across these task turns.  Do
+            # not convert/overwrite a trajectory after each individual turn;
+            # wait for the final session transcript instead.
+            begin_trajectory_batch = getattr(agent, "begin_trajectory_batch", None)
+            if callable(begin_trajectory_batch):
+                begin_trajectory_batch()
+
             # Execute turns with per-turn env injection application
             result = None
             for turn_idx, turn_instruction in enumerate(instructions):
@@ -387,6 +394,15 @@ async def run_single_task(
                         break
                     else:
                         raise  # re-raise non-context-overflow errors
+
+            finalize_trajectory = getattr(agent, "finalize_trajectory", None)
+            if callable(finalize_trajectory):
+                finalized_result = await finalize_trajectory()
+                # Preserve the existing context-overflow semantics: final_output
+                # stays empty when the last model turn did not complete, while
+                # the partial/full session trajectory is still exported.
+                if result is not None and finalized_result is not None:
+                    result = finalized_result
 
             if result is not None:
                 print("\n" + "=" * 80)

@@ -16,7 +16,8 @@ compatibility patches are applied once to the DTAP checkout and become
 normal DTAP source changes; the migrated runtime never executes
 `dtap_integration/apply.sh` and never imports from slime.
 
-Compatibility strings such as `.m4-verdict.json`, `DTAP_M4_ATTEMPT_INDEX`,
-and `m6-placement-v1` are intentionally retained in artifact/helper
-boundaries for v1 parity. They are not public Python API names. Rename
-them only together with an explicit artifact/protocol version bump.
+Compatibility strings such as `.m4-verdict.json` and
+`DTAP_M4_ATTEMPT_INDEX` remain at artifact/helper boundaries for v1 parity.
+The placement child protocol now writes `m6-placement-v2`, separating locator
+fields from actionable repair fields and adding an explicit retryability bit;
+the trusted reader still accepts sealed v1 results for migration compatibility.

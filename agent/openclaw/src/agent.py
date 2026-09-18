@@ -150,6 +150,9 @@ class OpenClawAgent(Agent):
         self._current_trajectory: Optional[Trajectory] = None
         self._last_cli_payload: Optional[Dict[str, Any]] = None
         self._token_usage: Optional[Dict[str, Any]] = None
+        self._session_started_at: Optional[datetime] = None
+        self._last_invocation_started_ns: Optional[int] = None
+        self._defer_trajectory_export: bool = False
 
         # MCP Proxy Manager
         self._proxy_manager: Optional[MCPProxyManager] = None
@@ -771,6 +774,10 @@ class OpenClawAgent(Agent):
             print(f"[OpenClaw CLI] Runtime trace dir: {self._runtime_trace_dir}")
 
         proc = None
+        # Freshness barrier anchor for the transcript that this invocation is
+        # expected to update.  A previous turn's same-session JSONL must not be
+        # accepted merely because it already exists.
+        self._last_invocation_started_ns = time.time_ns()
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -891,7 +898,8 @@ class OpenClawAgent(Agent):
                 instr = instr[:500]
             self._trace_metadata["instruction"] = instr
 
-        start_time = datetime.now()
+        if self._session_started_at is None:
+            self._session_started_at = datetime.now()
         final_output = ""
 
         for query in user_inputs:
@@ -919,18 +927,41 @@ class OpenClawAgent(Agent):
 
             self._turn_count += 1
 
-        # Generate trajectory from session JSONL
-        duration = (datetime.now() - start_time).total_seconds()
-        await self._generate_trajectory(duration)
+        # Standalone OpenClaw callers retain the old behavior. The benchmark
+        # runner defers export across task turns and calls finalize_trajectory
+        # once after the complete multi-turn session.
+        if not self._defer_trajectory_export:
+            duration = (datetime.now() - self._session_started_at).total_seconds()
+            await self._generate_trajectory(
+                duration,
+                min_mtime_ns=self._last_invocation_started_ns,
+            )
 
+        return self.get_result()
+
+    def begin_trajectory_batch(self) -> None:
+        """Defer trajectory conversion until all task turns have completed."""
+        self._defer_trajectory_export = True
+
+    async def finalize_trajectory(self) -> AgentResult:
+        """Export one fresh, complete session trajectory for the current task."""
+        if self._session_started_at is None:
+            self._session_started_at = datetime.now()
+        duration = (datetime.now() - self._session_started_at).total_seconds()
+        await self._generate_trajectory(
+            duration,
+            min_mtime_ns=self._last_invocation_started_ns,
+        )
+        self._defer_trajectory_export = False
         return self.get_result()
 
     async def _get_session_log_path(
         self,
         wait_seconds: float = 0.0,
         warn: bool = True,
+        min_mtime_ns: Optional[int] = None,
     ) -> Optional[str]:
-        """Find the session trace file written by OpenClaw CLI."""
+        """Find a session trace updated by the current OpenClaw invocation."""
         expected_names = (
             f"{self._session_id}.jsonl",
             f"{self._session_id}.trajectory.jsonl",
@@ -939,6 +970,17 @@ class OpenClawAgent(Agent):
         runtime_trace_dir = Path(self._runtime_trace_dir)
         deadline = time.monotonic() + max(wait_seconds, 0.0)
         tried_materialize = False
+
+        def _is_fresh(path: Path) -> bool:
+            try:
+                info = path.stat()
+            except OSError:
+                return False
+            if not path.is_file():
+                return False
+            if min_mtime_ns is None:
+                return True
+            return info.st_mtime_ns >= min_mtime_ns
 
         def _resolve_trajectory_pointer(pointer_path: Path) -> Optional[str]:
             try:
@@ -977,26 +1019,26 @@ class OpenClawAgent(Agent):
                 collect(value)
             for candidate in candidates:
                 path = Path(candidate).expanduser()
-                if path.suffix == ".jsonl" and path.is_file():
+                if path.suffix == ".jsonl" and _is_fresh(path):
                     return str(path)
             return None
 
         while True:
             for expected_name in expected_names:
                 runtime_trace = runtime_trace_dir / expected_name
-                if runtime_trace.exists():
+                if _is_fresh(runtime_trace):
                     return str(runtime_trace)
 
             session_dir = profile_dir / "agents" / "main" / "sessions"
             for expected_name in expected_names:
                 session_file = session_dir / expected_name
-                if session_file.exists():
+                if _is_fresh(session_file):
                     return str(session_file)
 
             pointer_file = session_dir / f"{self._session_id}.trajectory-path.json"
             if pointer_file.exists():
                 resolved = _resolve_trajectory_pointer(pointer_file)
-                if resolved:
+                if resolved and _is_fresh(Path(resolved)):
                     return resolved
 
             # OpenClaw 2026.9 stores embedded-agent transcripts in SQLite, so
@@ -1095,9 +1137,17 @@ class OpenClawAgent(Agent):
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return
 
-    async def _generate_trajectory(self, duration: float = 0.0) -> None:
+    async def _generate_trajectory(
+        self,
+        duration: float = 0.0,
+        *,
+        min_mtime_ns: Optional[int] = None,
+    ) -> None:
         """Generate trajectory from OpenClaw session JSONL."""
-        session_path = await self._get_session_log_path(wait_seconds=5.0)
+        session_path = await self._get_session_log_path(
+            wait_seconds=5.0,
+            min_mtime_ns=min_mtime_ns,
+        )
         if not session_path and self._last_cli_payload:
             # Embedded OpenClaw 2026.9 runs may intentionally be detached from
             # the transcript catalog. Preserve a standards-compatible dialogue
@@ -1223,6 +1273,9 @@ class OpenClawAgent(Agent):
         self._current_trajectory = None
         self._last_cli_payload = None
         self._token_usage = None
+        self._session_started_at = None
+        self._last_invocation_started_ns = None
+        self._defer_trajectory_export = False
 
     async def cleanup(self) -> None:
         """Clean up resources: stop proxies, restore config."""

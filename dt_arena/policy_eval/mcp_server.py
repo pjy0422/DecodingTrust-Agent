@@ -203,12 +203,17 @@ class M4EpisodeService:
                 remaining_submissions=authority.coordinator.runtime.remaining_submissions,
             )
 
-    async def apply_attack_step(self, token: str, step: Any) -> dict[str, Any]:
+    async def apply_attack_step(
+        self,
+        token: str,
+        step: Any,
+        depends_on: Any = None,
+    ) -> dict[str, Any]:
         authority = self.registry.resolve(token)
         authority.mcp_calls.record("apply_attack_step")
         if authority.placement_coordinator is None:
             raise EpisodeAccessError("unauthorized episode")
-        return await authority.placement_coordinator.apply(step)
+        return await authority.placement_coordinator.apply(step, depends_on=depends_on)
 
     def validate_placement(self, token: str, action_id: Any) -> dict[str, Any]:
         authority = self.registry.resolve(token)
@@ -296,9 +301,12 @@ def create_policy_mcp_server(
         return service.validate_attack_step(token(), step)
 
     @mcp.tool
-    async def apply_attack_step(step: dict[str, Any]) -> dict:
-        """Apply one validated environment action in a fresh placement sandbox."""
-        return await service.apply_attack_step(token(), step)
+    async def apply_attack_step(
+        step: dict[str, Any],
+        depends_on: list[str] | None = None,
+    ) -> dict:
+        """Apply one action, optionally replaying owned verified prerequisites."""
+        return await service.apply_attack_step(token(), step, depends_on)
 
     @mcp.tool
     def validate_placement(action_id: str) -> dict:

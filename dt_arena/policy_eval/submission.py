@@ -357,6 +357,11 @@ class SubmissionCoordinator:
                         attempt_root=workspace.output_root,
                         submitted_steps=validated.steps,
                         submitted_plan={"steps": [step.to_dict() for step in validated.steps]},
+                        trajectory_path=result.trajectory_path,
+                        mcp_path=result.mcp_events_path,
+                        # Artifact identity was fixed by DtapAttemptRunner.  Do
+                        # not independently re-discover another same-named file.
+                        discover_artifacts=False,
                         redactions=(
                             str(self.source_task_dir.resolve()),
                             str(self.episode_root.resolve()),

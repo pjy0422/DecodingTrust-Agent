@@ -110,18 +110,25 @@ def _status(event: Mapping[str, Any], completed: Mapping[str, Mapping[str, Any]]
 def _matches(pattern: AccessPattern, event: Mapping[str, Any]) -> bool:
     if _qualified(event) not in pattern.victim_tools:
         return False
-    arguments = event.get("arguments")
+    # Schema v2 retains raw arguments for the viewer and keeps the original
+    # hashed shape under `arguments_redacted`.  Continue accepting schema v1.
+    arguments = event.get("arguments_redacted")
+    if not isinstance(arguments, Mapping):
+        arguments = event.get("arguments")
     if not isinstance(arguments, Mapping):
         return False
     for field in pattern.required_fields:
         observed = arguments.get(field.victim_argument)
-        if not isinstance(observed, Mapping) or observed.get("type") != "string":
-            return False
-        # DTAP schema v1 records Python code-point length, while SHA-256 hashes UTF-8.
-        if observed.get("length") != len(field.value):
-            return False
-        expected = hashlib.sha256(field.value.encode("utf-8")).hexdigest()
-        if observed.get("sha256") != expected:
+        if isinstance(observed, Mapping) and observed.get("type") == "string":
+            # DTAP schema v1/v2 redacted shape: Python code-point length and
+            # SHA-256 over UTF-8.
+            if observed.get("length") != len(field.value):
+                return False
+            expected = hashlib.sha256(field.value.encode("utf-8")).hexdigest()
+            if observed.get("sha256") != expected:
+                return False
+        elif str(observed) != str(field.value):
+            # Tolerate raw-only event producers as well.
             return False
     return True
 

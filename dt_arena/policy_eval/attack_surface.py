@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .episode import TaskSnapshot
+from dt_arena.src.placement_contract import PlacementResourceContract
 
 
 _LEGACY_GUEST_DIRECT_COMPOSE_PATHS = frozenset(
@@ -27,10 +28,14 @@ class ToolSpec:
     # part of the policy-visible tool contract and therefore is removed by
     # ``to_dict`` below. ``None`` fails closed for environment tools.
     placement_capability: str | None = None
+    # Trusted MCP metadata used only by the receipt coordinator. It is not
+    # projected to the policy; policies can reference only opaque action ids.
+    placement_resource: PlacementResourceContract | None = None
 
     def to_dict(self, *, compact_description: bool = False) -> dict[str, Any]:
         result = asdict(self)
         result.pop("placement_capability")
+        result.pop("placement_resource")
         if compact_description and self.description:
             # Claude Code persists oversized MCP results to a sandbox file. The
             # policy intentionally has no file tools, so retain the semantic

@@ -32,10 +32,28 @@ Usage:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Optional, Any
 from datetime import datetime
+import hashlib
+import json
 import uuid
 import random
+
+
+def _stable_article_id(*, title: str, summary: str, source: str, symbol: Optional[str]) -> int:
+    """Generate the same eight-digit id in every Python process.
+
+    Built-in ``hash()`` is salted per process, which broke placement/victim
+    parity whenever an article was generated in separate fresh sandboxes.
+    """
+
+    canonical = json.dumps(
+        {"source": source, "summary": summary, "symbol": symbol, "title": title},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return 10_000_000 + int.from_bytes(hashlib.sha256(canonical).digest()[:8], "big") % 90_000_000
 
 
 @dataclass
@@ -57,7 +75,12 @@ class FakeNews:
 
     def __post_init__(self):
         if self.article_id is None:
-            self.article_id = abs(hash(self.title)) % 100000000
+            self.article_id = _stable_article_id(
+                title=self.title,
+                summary=self.summary,
+                source=self.source,
+                symbol=self.symbol,
+            )
         if self.published_time is None:
             self.published_time = datetime.now().strftime("%Y-%m-%d %H:%M")
 

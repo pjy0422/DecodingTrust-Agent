@@ -36,6 +36,7 @@ The UI opens at `http://127.0.0.1:8765` by default and supports:
   the primary debugging label, while preserving the config task ID and random
   public episode ID as internal references,
 - policy/victim model names (with an explicit `not recorded` fallback),
+- victim agentic harness names such as OpenClaw and OpenAI SDK,
 - explicit policy tool-call and victim-step counts,
 - policy activity counted by actual tool calls rather than stream-json line
   count,

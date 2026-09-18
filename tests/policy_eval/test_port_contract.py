@@ -26,6 +26,15 @@ def test_artifact_v1_compatibility(tmp_path: Path):
     assert layout.attempt(1).name == "attempt-0001"
 
 
+def test_policy_turn_budget_scales_with_h_and_preserves_explicit_override():
+    from dt_arena.policy_eval.security_policy import policy_max_turn_budget
+
+    assert policy_max_turn_budget(1) == 64
+    assert policy_max_turn_budget(2) == 64
+    assert policy_max_turn_budget(5) == 160
+    assert policy_max_turn_budget(5, 96) == 96
+
+
 def test_e2e_result_is_printed_and_persisted(tmp_path: Path, capsys):
     from dt_arena.policy_eval.scripts.run_policy_e2e import _emit_result
 
@@ -105,7 +114,7 @@ def test_latest_holdout_prompt_is_byte_frozen():
     current = Path(policy_eval.__file__).resolve().parent / "planning/current.py"
     prompt = _string_assignment(current, "PLACEMENT_POLICY_PROMPT_TEMPLATE").format(max_submissions=2)
     prompt += _feedback_suffix(current)
-    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == "94422599f87769747e90f184022f25bd123dd227177929fa701a05afd2580380"
+    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == "8f134e9eb4fe83cb2e5911071031a4becce943120e7290a8eb1960bb0549d72e"
 
 
 def test_harness_and_planning_are_separate():

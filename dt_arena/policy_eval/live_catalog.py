@@ -7,6 +7,7 @@ from typing import Any
 
 from .attack_surface import ToolSpec
 from .episode import TaskSnapshot
+from dt_arena.src.placement_contract import parse_placement_resource_metadata
 
 
 def _iter_agent_configs(agent_cfg: Any):
@@ -43,6 +44,9 @@ async def _list_url_tools(
         if input_schema is None:
             input_schema = {"type": "object", "properties": {}}
         name = str(tool.name)
+        meta = getattr(tool, "meta", None)
+        if meta is None:
+            meta = getattr(tool, "_meta", None)
         result.append(
             ToolSpec(
                 server_name=server_name,
@@ -52,6 +56,9 @@ async def _list_url_tools(
                 input_schema=dict(input_schema),
                 placement_capability=(
                     _environment_placement_capability(server_name, name) if classify_environment else None
+                ),
+                placement_resource=(
+                    parse_placement_resource_metadata(meta) if classify_environment else None
                 ),
             )
         )

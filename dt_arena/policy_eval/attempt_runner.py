@@ -28,6 +28,7 @@ class AttemptResult:
     judge_result: Mapping[str, Any] | None = None
     victim_output: str | None = None
     trajectory_path: Path | None = None
+    mcp_events_path: Path | None = None
     runtime_identity: str | None = None
     runtime_destroyed: bool = False
     infrastructure_stage: str | None = None
@@ -174,6 +175,47 @@ class DtapAttemptRunner:
         text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]{12,}", r"\1<redacted>", text)
         (workspace.output_root / ".dtap-stderr.log").write_text(text, encoding="utf-8")
 
+    @staticmethod
+    def _single_regular_artifact(root: Path, pattern: str) -> Path | None:
+        try:
+            resolved_root = root.resolve(strict=True)
+        except OSError:
+            return None
+        matches: list[Path] = []
+        for candidate in resolved_root.rglob(pattern):
+            try:
+                info = candidate.lstat()
+                resolved = candidate.resolve(strict=True)
+                resolved.relative_to(resolved_root)
+            except (OSError, ValueError):
+                continue
+            if candidate.is_symlink() or not candidate.is_file() or info.st_size < 0:
+                continue
+            matches.append(resolved)
+        return matches[0] if len(matches) == 1 else None
+
+    @classmethod
+    def _single_trajectory_artifact(cls, root: Path) -> Path | None:
+        try:
+            resolved_root = root.resolve(strict=True)
+        except OSError:
+            return None
+        matches: list[Path] = []
+        for candidate in resolved_root.rglob("*.json"):
+            if candidate.name in {"judge_result.json", ".m4-verdict.json"}:
+                continue
+            try:
+                resolved = candidate.resolve(strict=True)
+                resolved.relative_to(resolved_root)
+                if candidate.is_symlink() or not candidate.is_file():
+                    continue
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, ValueError, UnicodeError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict) and isinstance(payload.get("trajectory"), list):
+                matches.append(resolved)
+        return matches[0] if len(matches) == 1 else None
+
     async def _run_once(self, workspace: AttemptWorkspace) -> AttemptResult:
         workspace.output_root.mkdir(parents=True, exist_ok=True)
         async with AsyncExitStack() as stack:
@@ -229,6 +271,15 @@ class DtapAttemptRunner:
 
             output = stdout.decode("utf-8", errors="replace")
             self._retain_stderr_diagnostic(workspace, stderr, env)
+
+        # Resolve artifact identity once, at the trusted attempt boundary, and
+        # pass these exact paths to feedback/export consumers.  Never let those
+        # consumers independently choose a different "first" or "latest" file.
+        trajectory_path = self._single_trajectory_artifact(workspace.output_root)
+        mcp_events_path = self._single_regular_artifact(
+            workspace.output_root,
+            "*.mcp-events.jsonl",
+        )
         if self.security_policy is None:
             evaluation_started = "[DTAP_STATUS] phase=running" in output
             try:
@@ -260,6 +311,8 @@ class DtapAttemptRunner:
                 attack_success=attack_success,
                 task_success=task_success if isinstance(task_success, bool) else None,
                 judge_result=judge,
+                trajectory_path=trajectory_path,
+                mcp_events_path=mcp_events_path,
                 runtime_identity=runtime_identity,
                 runtime_destroyed=True,
             )
@@ -288,6 +341,8 @@ class DtapAttemptRunner:
         return AttemptResult(
             evaluation_started=evaluation_started,
             attack_success=verdict.attack_success,
+            trajectory_path=trajectory_path,
+            mcp_events_path=mcp_events_path,
             runtime_identity=runtime_identity,
             runtime_destroyed=True,
         )

@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     dataset_path TEXT,
     policy_model TEXT,
     victim_model TEXT,
+    victim_agent_type TEXT,
     domain TEXT,
     threat_model TEXT,
     status TEXT,
@@ -100,6 +101,7 @@ _OPTIONAL_COLUMNS = {
     "dataset_path": "TEXT",
     "policy_model": "TEXT",
     "victim_model": "TEXT",
+    "victim_agent_type": "TEXT",
     "policy_usage_json": "TEXT",
     "victim_usage_json": "TEXT",
     "attempt_count": "INTEGER",
@@ -198,6 +200,7 @@ class TrajectoryDB:
             "dataset_path",
             "policy_model",
             "victim_model",
+            "victim_agent_type",
             "domain",
             "threat_model",
             "status",
@@ -257,10 +260,10 @@ class TrajectoryDB:
                 cohort_params.append(value)
         if q:
             cohort_clauses.append(
-                "(episode_id LIKE ? OR task_id LIKE ? OR dataset_path LIKE ? OR policy_model LIKE ? OR victim_model LIKE ? OR risk_category LIKE ? OR artifact_path LIKE ?)"
+                "(episode_id LIKE ? OR task_id LIKE ? OR dataset_path LIKE ? OR policy_model LIKE ? OR victim_model LIKE ? OR victim_agent_type LIKE ? OR risk_category LIKE ? OR artifact_path LIKE ?)"
             )
             needle = f"%{q}%"
-            cohort_params.extend([needle] * 7)
+            cohort_params.extend([needle] * 8)
         clauses = list(cohort_clauses)
         params = list(cohort_params)
         if attack_success is not None:

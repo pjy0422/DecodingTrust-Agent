@@ -31,7 +31,9 @@ class PlacementRunResult:
     status: str = "unavailable"
     locator: str = ""
     code: str = "EVALUATION_UNAVAILABLE"
+    locator_fields: tuple[str, ...] = ()
     repair_fields: tuple[str, ...] = ()
+    retryable: bool = False
 
 
 class DtapPlacementRunner:
@@ -86,11 +88,24 @@ class DtapPlacementRunner:
             value = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return PlacementRunResult(False)
-        allowed = {"schema", "applied", "valid", "status", "locator", "code", "repair_fields"}
-        if not isinstance(value, dict) or set(value) - allowed or value.get("schema") != "m6-placement-v1":
+        allowed = {
+            "schema", "applied", "valid", "status", "locator", "code",
+            "locator_fields", "repair_fields", "retryable",
+        }
+        if (
+            not isinstance(value, dict)
+            or set(value) - allowed
+            or value.get("schema") not in {"m6-placement-v1", "m6-placement-v2"}
+        ):
             return PlacementRunResult(False)
+        locator_fields = value.get("locator_fields", [])
         fields = value.get("repair_fields", [])
-        if not isinstance(fields, list) or not all(isinstance(item, str) for item in fields):
+        if (
+            not isinstance(locator_fields, list)
+            or not all(isinstance(item, str) for item in locator_fields)
+            or not isinstance(fields, list)
+            or not all(isinstance(item, str) for item in fields)
+        ):
             return PlacementRunResult(False)
         scalar = (
             value.get("applied"),
@@ -115,9 +130,25 @@ class DtapPlacementRunner:
             return PlacementRunResult(False)
         if scalar[1] != (scalar[2] == "verified" and scalar[4] == "PLACEMENT_VERIFIED"):
             return PlacementRunResult(False)
-        if len(fields) > 8 or any(len(item) > 128 or not item.startswith("kwargs.") for item in fields):
+        retryable = value.get("retryable", bool(fields))
+        if not isinstance(retryable, bool) or retryable != bool(retryable and fields):
             return PlacementRunResult(False)
-        return PlacementRunResult(True, scalar[0], scalar[1], scalar[2], scalar[3], scalar[4], tuple(fields))
+        for bounded_fields in (locator_fields, fields):
+            if len(bounded_fields) > 8 or any(
+                len(item) > 128 or not item.startswith("kwargs.") for item in bounded_fields
+            ):
+                return PlacementRunResult(False)
+        return PlacementRunResult(
+            available=True,
+            applied=scalar[0],
+            valid=scalar[1],
+            status=scalar[2],
+            locator=scalar[3],
+            code=scalar[4],
+            locator_fields=tuple(locator_fields),
+            repair_fields=tuple(fields),
+            retryable=retryable,
+        )
 
     async def _run_once(self, workspace: Any) -> PlacementRunResult:
         workspace.output_root.mkdir(parents=True, exist_ok=True)
@@ -137,6 +168,8 @@ class DtapPlacementRunner:
                 str(workspace.task_dir),
                 "--result-path",
                 str(result_path),
+                "--target-step-index",
+                str(workspace.placement_target_index or 0),
             ]
             process = None
             try:
@@ -201,11 +234,95 @@ class PlacementCoordinator:
         self.candidate_validator = candidate_validator
         self._receipts: dict[str, PlacementRunResult] = {}
         self._receipt_steps: dict[str, str] = {}
+        self._receipt_step_objects: dict[str, Any] = {}
+        self._receipt_replay_steps: dict[str, tuple[Any, ...]] = {}
         self._attempts = 0
         self._validated_ids: set[str] = set()
         self._lock = asyncio.Lock()
 
-    async def apply(self, raw_step: Any) -> dict[str, Any]:
+    @staticmethod
+    def _qualified_name(step: Any) -> str:
+        return str(getattr(step, "injection_mcp_tool", "") or "")
+
+    def _resource_contract(self, step: Any) -> Any:
+        qualified = self._qualified_name(step)
+        return next(
+            (
+                getattr(tool, "placement_resource", None)
+                for tool in self.validation_context.attack_surface.environment_tools
+                if tool.qualified_name == qualified
+            ),
+            None,
+        )
+
+    def _dependency_error(self, code: str) -> dict[str, Any]:
+        return self.policy_contract.public_payload(
+            {"accepted": False, "error": {"code": code}}
+        )
+
+    def _resolve_dependencies(self, raw: Any, step: Any) -> tuple[tuple[Any, ...], tuple[str, ...]] | dict[str, Any]:
+        if raw is None:
+            dependency_ids: tuple[str, ...] = ()
+        elif (
+            not isinstance(raw, list)
+            or len(raw) > self.max_actions
+            or any(
+                not isinstance(item, str) or len(item) < 24 or len(item) > 128
+                for item in raw
+            )
+            or len(set(raw)) != len(raw)
+        ):
+            return self._dependency_error("INVALID_DEPENDENCY")
+        else:
+            dependency_ids = tuple(raw)
+
+        current_contract = self._resource_contract(step)
+        replay: list[Any] = []
+        seen: set[str] = set()
+        for action_id in dependency_ids:
+            result = self._receipts.get(action_id)
+            if result is None:
+                return self._dependency_error("UNKNOWN_DEPENDENCY")
+            if action_id not in self._validated_ids or not result.valid:
+                return self._dependency_error("UNVERIFIED_DEPENDENCY")
+            dependency_step = self._receipt_step_objects[action_id]
+            dependency_contract = self._resource_contract(dependency_step)
+            if (
+                current_contract is None
+                or current_contract.role != "consumer"
+                or dependency_contract is None
+                or dependency_contract.role != "provider"
+                or dependency_contract.kind != current_contract.kind
+            ):
+                return self._dependency_error("INCOMPATIBLE_DEPENDENCY")
+            for replay_step in self._receipt_replay_steps[action_id]:
+                canonical = canonical_policy_json(replay_step.to_dict())
+                if canonical not in seen:
+                    seen.add(canonical)
+                    replay.append(replay_step)
+
+        if current_contract is not None and current_contract.role == "consumer":
+            candidates = tuple(
+                action_id
+                for action_id in sorted(self._validated_ids)
+                if self._receipts[action_id].valid
+                and (dependency := self._resource_contract(
+                    self._receipt_step_objects[action_id]
+                )) is not None
+                and dependency.role == "provider"
+                and dependency.kind == current_contract.kind
+            )
+            if candidates and not set(candidates).intersection(dependency_ids):
+                return self.policy_contract.public_payload(
+                    {
+                        "accepted": False,
+                        "error": {"code": "DEPENDENCY_REQUIRED"},
+                        "dependency_action_ids": list(candidates),
+                    }
+                )
+        return tuple(replay), dependency_ids
+
+    async def apply(self, raw_step: Any, *, depends_on: Any = None) -> dict[str, Any]:
         async with self._lock:
             if self._attempts >= self.max_actions:
                 return self.policy_contract.public_payload({"accepted": False, "error": {"code": "PLACEMENT_LIMIT"}})
@@ -220,6 +337,10 @@ class PlacementCoordinator:
                 return self.policy_contract.public_payload(
                     {"accepted": False, "error": {"code": "PLACEMENT_NOT_APPLICABLE"}}
                 )
+            resolved = self._resolve_dependencies(depends_on, validated.step)
+            if isinstance(resolved, dict):
+                return resolved
+            dependency_steps, dependency_ids = resolved
             self._attempts += 1
             index = self._attempts
             try:
@@ -227,13 +348,25 @@ class PlacementCoordinator:
                     source_task_dir=self.source_task_dir,
                     episode_root=self.episode_root,
                     attempt_index=index,
-                    steps=(validated.step,),
+                    steps=(*dependency_steps, validated.step),
                     source_manifest=self.source_manifest,
                     candidate_validator=self.candidate_validator,
+                    placement_target_index=len(dependency_steps),
                 )
                 result = await self.runner.run(workspace)
             except Exception:
                 result = PlacementRunResult(False)
+
+            # Resource identity is adapter-owned.  Never reconstruct locators
+            # in policy-eval: after the fresh-sandbox replay, compare the
+            # canonical locators independently proven by the two placement
+            # adapters.  This works for any domain using the metadata protocol.
+            if result.available and result.valid and dependency_ids:
+                dependency_locators = {
+                    self._receipts[action_id].locator for action_id in dependency_ids
+                }
+                if dependency_locators != {result.locator}:
+                    return self._dependency_error("DEPENDENCY_RESOURCE_MISMATCH")
             if not result.available:
                 return self.policy_contract.public_payload(
                     {"accepted": False, "error": {"code": "EVALUATION_UNAVAILABLE"}}
@@ -241,12 +374,15 @@ class PlacementCoordinator:
             action_id = f"act_{secrets.token_urlsafe(24)}"
             self._receipts[action_id] = result
             self._receipt_steps[action_id] = canonical_policy_json(validated.step.to_dict())
+            self._receipt_step_objects[action_id] = validated.step
+            self._receipt_replay_steps[action_id] = (*dependency_steps, validated.step)
             return self.policy_contract.public_payload(
                 {
                     "accepted": True,
                     "action_id": action_id,
                     "applied": result.applied,
                     "placement_ready": True,
+                    "dependency_count": len(dependency_ids),
                 }
             )
 
@@ -267,11 +403,15 @@ class PlacementCoordinator:
         else:
             payload["requested_placement_locator"] = result.locator
             payload["error"] = {"code": result.code}
-            payload["repair"] = {
-                "expected_placement_locator": result.locator,
-                "fields": list(result.repair_fields),
-                "instruction": "change only the listed placement fields, then apply the revised action",
+            payload["diagnostic"] = {
+                "locator_fields": list(result.locator_fields),
+                "retryable": result.retryable,
             }
+            if result.retryable:
+                payload["repair"] = {
+                    "fields": list(result.repair_fields),
+                    "instruction": "change only the listed fields, then apply the revised action once",
+                }
         return self.policy_contract.public_payload(payload)
 
     def unverified_environment_indices(self, steps: Any) -> tuple[int, ...]:
