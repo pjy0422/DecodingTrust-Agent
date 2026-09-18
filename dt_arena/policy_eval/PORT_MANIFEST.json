@@ -1,0 +1,393 @@
+{
+  "artifact_contract": {
+    "latest_prompt_sha256": "94422599f87769747e90f184022f25bd123dd227177929fa701a05afd2580380",
+    "schema": "dtap-agent-rl-episode",
+    "schema_version": 1
+  },
+  "canonical_source_commit": "f1e8ee90fe725d394b4e9929947423ecaa01976c",
+  "canonical_target_base_commit": "e0323a521ba4ef88f8e14c1eccf68d0a3d19a458",
+  "copied_files": [
+    {
+      "destination": "dt_arena/policy_eval/__init__.py",
+      "sha256": "e566ba19c722987843fb6a22210b543704e31878426d1589e05da401c9ddb439",
+      "source": "__init__.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/actions.py",
+      "sha256": "69ebe893044d61c9577562119964def0541249c6c0b33b088c70686e3d0872ab",
+      "source": "actions.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/attack_surface.py",
+      "sha256": "a099f56240a46097329fcb43421553c728f3e00a70ebfd1916f183fe7bdefcad",
+      "source": "attack_surface.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/attempt_runner.py",
+      "sha256": "24824c1885447d90a21725265516f3fe3e8f54890cee627f4489f540c53833e3",
+      "source": "attempt_runner.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/audit.py",
+      "sha256": "a9727b57c79ca6d1e0a613feef454ceba4ae9fdfe677ed6327f03d53d82dbf07",
+      "source": "audit.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/authority.py",
+      "sha256": "0bb9142af7704d138cf967f138501aa979b8da7698839cf99e63e59900fc05db",
+      "source": "authority.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/benchmark_manifest.py",
+      "sha256": "ff258e52275b380c33041577f2951bfd5b186ac8f8602d47f2efe531ffc08a3e",
+      "source": "benchmark_manifest.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/candidate_config.py",
+      "sha256": "a88765d50c2f47e9e070521b7efe5bf82f3e6f26de1a57dbae6ecf21acb5ae27",
+      "source": "candidate_config.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/dtap_compat.py",
+      "sha256": "5014bb4681bcd2ab9bed5fe2ddc7d0e2edfa6660cb3dc9d347449b7cc781df02",
+      "source": "dtap_compat.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/episode.py",
+      "sha256": "af199a2233466861aa52dc0950a82b94382bf778abc233e984c3ca002295e09f",
+      "source": "episode.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/episode_runtime.py",
+      "sha256": "d4c9fae1fcbf97000f5cee716343aaadec4c9f2ce39e524acef1e3b44295de50",
+      "source": "episode_runtime.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/feedback/__init__.py",
+      "sha256": "4362237179bae475a67bdb9313da52d9555e2a2caa4cc1e1e4febc876e61500f",
+      "source": "feedback/__init__.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/feedback/builder.py",
+      "sha256": "9faf8821811a2e8b785c1bc0eee59393f5d0fc9a6956b017e5a71d7689cd0c20",
+      "source": "feedback/builder.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/feedback/deterministic.py",
+      "sha256": "6856326969287b18b320600ecf0d818b5906d83008266c01d258b4bebee19b5c",
+      "source": "feedback/deterministic.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/feedback/digestor.py",
+      "sha256": "29af2449a4623732a82832bd4dd3738454e3e3b5d6aaac5df9e4cf2543875ae9",
+      "source": "feedback/digestor.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/feedback/providers.py",
+      "sha256": "f362af6d3d658feb529be0200c1d33b152770f0f2059d560c67e3900a41ffb12",
+      "source": "feedback/providers.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/feedback/schema.py",
+      "sha256": "40f1d793b1df60915445435db3d0ae3b841a45ac5a51c3ffe405c9ac77d89fa4",
+      "source": "feedback/schema.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/feedback/targets.py",
+      "sha256": "769ee0625454ac6c52a316a7f14bf1a476e16e88c5aeb7e9c24df893d51de56b",
+      "source": "feedback/targets.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/feedback/victim_trace.py",
+      "sha256": "35bef913367df861fc5a5ec938781c7b706939966a1a8e0bf7f648ec31bbd460",
+      "source": "feedback/victim_trace.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/integrity.py",
+      "sha256": "2621dcd71576536e3647f8f4568d982b7a711b188e33f973d603170c5426d8e3",
+      "source": "integrity.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/live_catalog.py",
+      "sha256": "3ba141b630ccb01d35d6d2c5885cfd8e6d07d999cb44047303c33a66b9080682",
+      "source": "live_catalog.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/mcp_server.py",
+      "sha256": "1f82c7265bb2df401030a05de2254b4a280b43b62a0a403b12f0b0f2a06531ce",
+      "source": "mcp_server.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/placement.py",
+      "sha256": "d6a9eae16b04ef692158dd974981a0b9ce439932cd20494b782cff4a80001179",
+      "source": "placement.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/policy_contract.py",
+      "sha256": "2296990cdc5d0c67ed77c46b9121eb9cf87f8752aba5e72a1a723e6dc5a1eff8",
+      "source": "policy_contract.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/reward_firewall.py",
+      "sha256": "934de28daa8411da30cf01df4d58349b27b5b378036725620dac82260eaaf12b",
+      "source": "reward_firewall.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/runtime.py",
+      "sha256": "dd139fae3c04594fdb532e8d33efbed1c6058d52c7a627a8de90607cf6ee10a5",
+      "source": "runtime.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scheduler.py",
+      "sha256": "1fef5a9ea5abfe8cac2b1b60d5cd65051494bafecd76ca43a6e34c64c237151e",
+      "source": "scheduler.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "scripts/__init__.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/audit_placement_adapter_coverage.py",
+      "sha256": "162eea0ee7755dd86057770a8693952ee1b227ebef2fb61e636b25ebabc42ab3",
+      "source": "scripts/audit_m6_adapter_coverage.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/prepare_macos_baseline.py",
+      "sha256": "c8de6e695ef8527d039d57e9e39cad2bf9b0039f981f843c187e1bfaf1ef2b50",
+      "source": "scripts/prepare_macos_baseline.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/run_dtap_attempt.py",
+      "sha256": "4719eeb0abe3f6dfaa089c5f531980d31cf82930788d4d177369d14a2c50ceda",
+      "source": "scripts/run_dtap_attempt.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/run_dtap_placement_probe.py",
+      "sha256": "7350db90e47713acc885c1c382cf6c289002f62a0f635744c084ba9dfe734673",
+      "source": "scripts/run_dtap_placement_probe.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/run_holdout_matrix.py",
+      "sha256": "071ce3cee74c99b4d2359cf63cd26f2b7687af6d304a3cfae58335ffb8ae808d",
+      "source": "scripts/run_p3_holdout_gate.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/discover_live_view.py",
+      "sha256": "02e30524343583871dfbf3b804ff02475a02e33531785197ac9f955aef10017b",
+      "source": "scripts/smoke_m2_api.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/check_environment_verification.py",
+      "sha256": "075a1909bd38f301dc6a7026c8092c248516550ce32a8b10b368e2680c78aec5",
+      "source": "scripts/smoke_m5_env.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/run_policy_e2e.py",
+      "sha256": "d2f70f2277eb103a0abd3e76beddd829512621d58478e5ab1e3d4fce546b10c9",
+      "source": "scripts/smoke_m5_glm_e2e.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/run_domain_matrix.py",
+      "sha256": "59b147d95186baa860048508328bf99a675a7e680fe7dc5dac1e0014f12cc1f6",
+      "source": "scripts/smoke_m6_domain_matrix.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/check_placement.py",
+      "sha256": "832cbf2365e0124d32f903e9485866203ca557af76c8cf62d77846e3c797a833",
+      "source": "scripts/smoke_m6_placement.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/scripts/verify_runtime_lock.py",
+      "sha256": "bd6dd22d9ec34d37951578d7949917828b76f9d00d628922d11b4ec7da4e1356",
+      "source": "scripts/verify_m6_runtime_lock.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/security_policy.py",
+      "sha256": "0e4c8828b10134baae945fac6a0c487d7a0e7d5a87f48a173364d2a09d2a3584",
+      "source": "security_policy.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/service.py",
+      "sha256": "9de93ba199fd22ed2aa91ac1ddb60ba967c44b13ab9edbf05de59e13122db769",
+      "source": "service.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/submission.py",
+      "sha256": "b261f5a77bf6a2c21d5104cbc51c047070f47677544b9b5d0247982703d312a6",
+      "source": "submission.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/task_projection.py",
+      "sha256": "457f8a0a2bd5c991ebea072323d17b50630a1bb3ddd97f6fbba42632b2f7569a",
+      "source": "task_projection.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/validation.py",
+      "sha256": "bb9c7c3e119b6d2ea165164088345273e3cc1467aa521ad43e9dc7f1b4d66a15",
+      "source": "validation.py"
+    },
+    {
+      "destination": "dt_arena/policy_eval/benchmark_manifest.json",
+      "sha256": "81c941bc22709351d175c48b7a87c0b44f3e3fe9d02aee3d3ad77cb406ac7fe6",
+      "source": "benchmark_manifest.json"
+    },
+    {
+      "destination": "dt_arena/policy_eval/runtime-lock.json",
+      "sha256": "3efe7dac9eb09faa95771a4d73ec9da24b6d1f4a0e7adaafac71eeb32e1829f9",
+      "source": "dtap_integration/runtime-lock.json"
+    },
+    {
+      "destination": "dt_arena/policy_eval/requirements-release.txt",
+      "sha256": "bb77ec9fb1cc5f00069958048906e28b71640eeaea397fde945c738b5fa250b1",
+      "source": "requirements-release.txt"
+    }
+  ],
+  "execution_parity": {
+    "claude_launch_mode": "reusable harness / direct asyncio.create_subprocess_exec",
+    "feedback_mode": "final+deterministic",
+    "harness": "ClaudeCodeHarness",
+    "latest_holdout_prompt_bytes": 3077,
+    "latest_holdout_prompt_sha256": "94422599f87769747e90f184022f25bd123dd227177929fa701a05afd2580380",
+    "max_submissions": 2,
+    "placement_enabled": true,
+    "planning_strategy_default": "current",
+    "policy_model_default": "deepseek-v4-flash",
+    "victim_agent_type_default": "openclaw",
+    "victim_model_default": "deepseek-v4-flash"
+  },
+  "latest_e2e_route": [
+    "run_holdout_matrix",
+    "run_domain_matrix",
+    "run_policy_e2e",
+    "Claude Code direct subprocess"
+  ],
+  "runtime_slime_dependency": false,
+  "schema": "dtap-policy-eval-port",
+  "schema_version": 1,
+  "source_commit": "f1e8ee90fe725d394b4e9929947423ecaa01976c",
+  "source_repository": "pjy0422/slime",
+  "target_base_commit": "e0323a521ba4ef88f8e14c1eccf68d0a3d19a458",
+  "viewer_files": [
+    {
+      "destination": "tools/dtap-trajectory-viewer/.gitignore",
+      "sha256": "b4365fac9a5d21401ab9c5dbc5dda46184d7dcf6e5dfbc838bd4e2605c1b4173",
+      "source": "tools/dtap-trajectory-viewer/.gitignore"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/MANIFEST.in",
+      "sha256": "a950b8ec397b5266f2fcb0fe33e90dc8dc6a47092cd0095be608038a47bf7fcd",
+      "source": "tools/dtap-trajectory-viewer/MANIFEST.in"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/README.md",
+      "sha256": "107315f95afc75a53faae16936c51af8efc34974554639b19c40991f5b7a52e9",
+      "source": "tools/dtap-trajectory-viewer/README.md"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/__init__.py",
+      "sha256": "4222a02c67ea70733f4ffd76bd0b2fef47f1098ea5b4f036dda90f0028a06a1b",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/__init__.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/assets/style.css",
+      "sha256": "e8a86e6fb165b348f0a6230138e169c9fb1e5ea8fa7709e9abdeb783af47b2f0",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/assets/style.css"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/assets/template.html",
+      "sha256": "e39b7232e6e56a46084afa6bb3cfd1d859a7162c4f9088139a1effee10c2fe53",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/assets/template.html"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/assets/viewer.js",
+      "sha256": "25bee97e78bae276873a66c6748d21e41cf898a235746a6dd67a74d1203f3d28",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/assets/viewer.js"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/bundle.py",
+      "sha256": "bc220d3fe761ed0bf2779434733119968470944166106eafe5153b6c86048907",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/bundle.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/cli.py",
+      "sha256": "b81dc9b5e6cd03701dcc4411726e01c54c1180d23248686eee7f9a24a5fa5664",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/cli.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/db.py",
+      "sha256": "6169378a22ba7db33ab7cadd6954c603071ec8d3f34a4699a6379a415ac09f7e",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/db.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/indexer.py",
+      "sha256": "9c19ea63bb1b76f95e996bdb843eccc7a95c60216996093051d915e1a28d2cbc",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/indexer.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/parser.py",
+      "sha256": "f87f036ec0774dc8029680158b2f79558b29fbcd31d3f6f24bd37af0702d97b8",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/parser.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/render.py",
+      "sha256": "196ffc609cbed1594531fd74c381b14d0c67b47ac50292d5dbd2aa43ab2073be",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/render.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/server.py",
+      "sha256": "fb4a3163b8b8d5bc350102948ea139c931906e27b3fa74932833951a00c12e06",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/server.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/tuning.py",
+      "sha256": "bae95548e4815bfa9c8fe55c91f82b0bbc6527fb0102664290f78e1c50f5cc9a",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/tuning.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/web/app.css",
+      "sha256": "d45aa15a8223c12db81da167f3ed8ae750d0ab9e8a1e01b76bd346f4b2b35e37",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/web/app.css"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/web/app.js",
+      "sha256": "efb44c54e309b744abb302d1f7c8e16067ef8f3851c29db98b3c17032443e560",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/web/app.js"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/dtap_traj/web/index.html",
+      "sha256": "0a883bf299c6f0b5039d845aa8d1069f2259064afa5c13ccf494cd5dafbfefef",
+      "source": "tools/dtap-trajectory-viewer/dtap_traj/web/index.html"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/pyproject.toml",
+      "sha256": "7c2b2d83c5baf81bcbe6f0c86f1547308fe8696e98c3c44fef986addff4c2155",
+      "source": "tools/dtap-trajectory-viewer/pyproject.toml"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/requirements.txt",
+      "sha256": "8cfc3197b86bf23f2454918d3a0e212585c9cc70f8eee9ee36518311a93c7eb9",
+      "source": "tools/dtap-trajectory-viewer/requirements.txt"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/tests/conftest.py",
+      "sha256": "97b5ddaf492e9c53c37fdb78dea39ce31979abeaf217f5c5eef4c7da883d81b6",
+      "source": "tools/dtap-trajectory-viewer/tests/conftest.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/tests/test_explorer.py",
+      "sha256": "d4a37cea65e6e6e4dfff49cc8319a72667fbd960d3d0d7bafed52e01c41b9d6f",
+      "source": "tools/dtap-trajectory-viewer/tests/test_explorer.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/tests/test_live_matrix_integration.py",
+      "sha256": "33fa410054f6211bf96851248fdbfedabd4974b29ef1852b14abd4aa86dd18ec",
+      "source": "tools/dtap-trajectory-viewer/tests/test_live_matrix_integration.py"
+    },
+    {
+      "destination": "tools/dtap-trajectory-viewer/tests/test_parser.py",
+      "sha256": "9d193a5f4037921fa2e757b31bea18fe0f46f3f7e419db29a32c2b16ec0f63e4",
+      "source": "tools/dtap-trajectory-viewer/tests/test_parser.py"
+    }
+  ]
+}

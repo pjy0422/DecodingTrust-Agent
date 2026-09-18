@@ -35,6 +35,14 @@ from utils.resource_manager import (
 
 from dt_arena.src.types.agent import AgentConfig, RuntimeConfig
 from dt_arena.src.types.task import AttackConfig, TaskConfig
+from dt_arena.src.env_verification import (
+    SubprocessDockerInspector,
+    VerificationError,
+    VerificationMode,
+    build_readback_environments, build_injection_server_overrides,
+    verify_placement_batch,
+    verify_started_routes,
+)
 
 
 def _status(**fields: object) -> None:
@@ -147,6 +155,8 @@ async def run_single_task(
         # Build env injections by turn
         all_env_injections = get_env_injections_from_attack(attack_cfg)
         injection_server_urls: Dict[str, str] = {}
+        verification_mode = VerificationMode.from_env(os.getenv("DTAP_ENV_VERIFICATION"))
+        environment_docker = None
 
         if all_env_injections and not skip_mcp:
             required_servers = get_required_injection_servers(all_env_injections)
@@ -164,6 +174,9 @@ async def run_single_task(
                     injection_config,
                     resource_manager=resource_mgr,
                     task_id=task_id,
+                    task_env_overrides=build_injection_server_overrides(
+                        agent_cfg, list(required_servers)
+                    ),
                 )
 
                 if injection_config.get("environment_servers"):
@@ -176,6 +189,24 @@ async def run_single_task(
                             injection_server_urls[server_name] = server_info["url"]
 
                     print(f"[ENV INJECTION] Injection servers ready: {list(injection_server_urls.keys())}")
+
+                    if verification_mode is not VerificationMode.OFF and injection_manager:
+                        environment_docker = SubprocessDockerInspector.auto()
+                        route_proofs = verify_started_routes(
+                            PROJECT_ROOT,
+                            injection_manager,
+                            list(required_servers),
+                            os.environ,
+                            environment_docker,
+                        )
+                        for server_name, proofs in route_proofs.items():
+                            for proof in proofs:
+                                print(
+                                    "[DTAP_ENV_VERIFY] route=verified "
+                                    f"server={server_name} environment={proof.environment} "
+                                    f"network={','.join(proof.modes)}",
+                                    flush=True,
+                                )
 
         # Build runtime config
         effective_disallowed_tools = disallowed_tools
@@ -269,6 +300,9 @@ async def run_single_task(
         _status(phase="running", turns=len(user_instruction) if isinstance(user_instruction, list) else 1)
         # Run agent with per-turn env injection support
         async with agent:
+            feedback_hook = getattr(agent, "register_attack_feedback", None)
+            if callable(feedback_hook):
+                feedback_hook(attack_cfg)
             metadata = {
                 "task_id": task_cfg.task_id,
                 "domain": task_cfg.domain,
@@ -305,6 +339,35 @@ async def run_single_task(
                             print(f"  [{status}] {inj_result['server_name']}:{inj_result['tool_name']}")
                             if not inj_result["success"]:
                                 print(f"       Error: {inj_result['error']}")
+                        feedback_hook = getattr(
+                            agent, "register_environment_feedback", None
+                        )
+                        if callable(feedback_hook):
+                            feedback_hook(turn_env_injections, injection_results)
+                        if verification_mode is not VerificationMode.OFF:
+                            failed = [result for result in injection_results if not result["success"]]
+                            if failed:
+                                raise VerificationError("environment injection failed before target call")
+                        if verification_mode is VerificationMode.PLACEMENT:
+                            if environment_docker is None:
+                                raise VerificationError("environment route proof was not established")
+                            placement_proofs = await verify_placement_batch(
+                                turn_env_injections,
+                                injection_results,
+                                os.environ,
+                                environment_docker,
+                                strict=os.getenv("DTAP_ENV_VERIFICATION_STRICT") == "1",
+                                server_environments=build_readback_environments(
+                                    agent_cfg, injection_manager, list(required_servers)
+                                ),
+                            )
+                            for proof in placement_proofs:
+                                print(
+                                    "[DTAP_ENV_VERIFY] placement=" + proof.status.value + " "
+                                    f"server={proof.server} tool={proof.tool} "
+                                    f"digest={proof.digest or '-'}",
+                                    flush=True,
+                                )
 
                 # Run agent for this turn
                 _status(turn=turn_id, total_turns=len(instructions))

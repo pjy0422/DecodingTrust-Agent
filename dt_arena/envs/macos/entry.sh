@@ -2,10 +2,11 @@
 set -Eeuo pipefail
 
 # Custom entry.sh for DecodingTrust-Agent macOS VM.
-# Cold-boots from a baseline qcow2 (no savevm/loadvm — that mechanism is
-# tied to the original host CPU's TSC + XSAVE state and doesn't survive
-# moving the qcow2 between machines). Runs QEMU in background, auto-starts
-# FastAPI MCP service. Volume-mounted over /run/entry.sh.
+# Cold-boots from a prepared baseline qcow2 (no savevm/loadvm — VM-state is
+# tied to the original host CPU's TSC + XSAVE state). The preparation command
+# applies the published image's `booted` disk state before this entrypoint is
+# used. Runs QEMU in background and auto-starts FastAPI. Volume-mounted over
+# /run/entry.sh.
 
 : "${APP:="macOS"}"
 : "${VGA:="vmware"}"
@@ -86,14 +87,15 @@ done
 version=$(qemu-system-x86_64 --version | head -n 1 | cut -d '(' -f 1 | awk '{ print $NF }')
 info "Booting ${APP}${BOOT_DESC} using QEMU v$version..."
 
-echo "Cold-boot mode (no -loadvm)"
-
 # ── pflash UEFI vars: raw → qcow2 (kept even without savevm) ──
 # qcow2 vars file is per-instance (copied above) and remains writable.
 ARGS=$(echo "$ARGS" | sed 's|format=raw,file=\(/storage/[^/]*/macos\)\.vars|format=qcow2,file=\1_vars.qcow2|')
 
-# Strip any -loadvm <name> that boot.sh may have appended; cold-boot only.
+# Cold boot from a prepared baseline. The source image's `booted` internal
+# snapshot must be applied to a copy and removed before using it here; an
+# external overlay cannot expose an internal VM-state snapshot to -loadvm.
 ARGS=$(echo "$ARGS" | sed 's|-loadvm [^ ]*||g')
+echo "Cold-boot mode (no -loadvm)"
 
 # Change serial from mon:stdio to none for background mode.
 ARGS=$(echo "$ARGS" | sed 's|-serial mon:stdio|-serial none|')

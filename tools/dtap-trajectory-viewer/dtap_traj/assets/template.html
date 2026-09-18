@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>__CSS__</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>🎬 DTAP Trajectories</h1>
+  <p class="head-meta">__META__</p>
+  <p class="legend">The policy designs and submits an attack; the victim then encounters
+    that submitted configuration. Text from the submitted attack is
+    <span class="inj-mark-inline">highlighted in red</span>. Policy and victim traces remain
+    separate so a policy tool receipt cannot be mistaken for victim behavior.</p>
+
+  <section id="config-panel" class="config-panel" hidden></section>
+  <section id="payload-panel" class="payload-panel" hidden></section>
+
+  <div class="tabs" role="tablist">
+    <button id="policy-tab" data-target="policy-panel" role="tab">🧭 Policy trajectory</button>
+    <button id="victim-tab" data-target="victim-panel" role="tab">🎯 DTAP victim trajectory</button>
+  </div>
+  <section id="policy-panel" class="trace-panel"><div id="policy-timeline" class="loading">Loading…</div></section>
+  <section id="victim-panel" class="trace-panel"><div id="victim-timeline" class="loading">Loading…</div></section>
+</main>
+<script id="dtap-data" type="application/json">__DATA__</script>
+<script>window.DTAP_DATA = JSON.parse(document.getElementById('dtap-data').textContent);</script>
+<script>__JS__</script>
+</body>
+</html>

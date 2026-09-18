@@ -144,8 +144,15 @@ def gpt_score_report(report_text: str) -> Dict[str, Any]:
         "response_format": {"type": "json_object"},
     }
 
+    # OpenAI SDK-compatible configuration commonly includes the /v1 suffix,
+    # while older DTAP examples supplied only the origin. Accept both forms.
+    completions_url = (
+        base_url + "/chat/completions"
+        if base_url.endswith("/v1")
+        else base_url + "/v1/chat/completions"
+    )
     req = urllib.request.Request(
-        base_url + "/v1/chat/completions",
+        completions_url,
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Authorization": "Bearer " + api_key,

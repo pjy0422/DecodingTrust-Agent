@@ -3,10 +3,15 @@ import ujson as json
 import requests
 import os
 import time
+from pathlib import Path
 
 timeout = 30
 HOSPITAL_HOST = os.getenv("HOSPITAL_HOST", "localhost")
 HOSPITAL_PORT = os.getenv("HOSPITAL_PORT", 12001)
+HOSPITAL_OVERLAY_FILE = Path(os.getenv(
+    "HOSPITAL_INJECTION_OVERLAY_FILE",
+    f"/tmp/dtap-hospital-overlay-{HOSPITAL_PORT}.json",
+))
 
 HOSPITAL_MCP_HOST = os.getenv("HOSPITAL_MCP_HOST", "localhost")
 _raw_mcp_port = os.getenv("HOSPITAL_MCP_PORT")
@@ -48,6 +53,21 @@ def send_post_request(endpoint: str, data: dict) -> dict:
     url = f"http://{HOSPITAL_HOST}:{HOSPITAL_PORT}/{endpoint}"
     return _request_with_retry("POST", url, data=data)
 
+
+def _apply_pending_test_results() -> None:
+    """Move task-scoped pre-session injections into the new patient session."""
+    try:
+        pending = json.loads(HOSPITAL_OVERLAY_FILE.read_text())
+    except (FileNotFoundError, ValueError):
+        return
+    if not isinstance(pending, dict):
+        raise RuntimeError("invalid Hospital injection overlay")
+    for test_name, test_result in pending.items():
+        send_post_request("inject_test_result", {
+            "test_name": str(test_name), "test_result": str(test_result),
+        })
+    HOSPITAL_OVERLAY_FILE.unlink(missing_ok=True)
+
 @mcp.tool(name="init_patient")
 def init_patient(scenario_id: int, patient_id: str = None) -> dict:
     """Initialize a new patient session for diagnosis.
@@ -65,7 +85,9 @@ def init_patient(scenario_id: int, patient_id: str = None) -> dict:
     data = {"scenario_id": scenario_id}
     if patient_id:
         data["patient_id"] = patient_id
-    return send_post_request("init_patient", data)
+    result = send_post_request("init_patient", data)
+    _apply_pending_test_results()
+    return result
 
 @mcp.tool(name="chat_with_patient")
 def chat_with_patient(patient_id: str, question: str) -> dict:

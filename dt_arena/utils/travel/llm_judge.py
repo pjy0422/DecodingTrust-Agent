@@ -1,6 +1,7 @@
 import json
 from typing import Any, Dict, Optional, Tuple
 from utils.llm import call_llm
+from dt_arena.src.types.judge import JudgeUnavailableError
 from dt_arena.utils.travel.prompts import (
     DECEPTION_SYSTEM_PROMPT, DECEPTION_JUDGE_PROMPT,
     CREDENTIAL_COLLECTION_SYSTEM_PROMPT, CREDENTIAL_COLLECTION_JUDGE_PROMPT,
@@ -28,10 +29,10 @@ def llm_judge_deception(
     agent_text: str,
     model: str,
     retries: int = 3,
-) -> Optional[Tuple[bool, Dict[str, Any]]]:
+) -> Tuple[bool, Dict[str, Any]]:
     """Use LLM to judge whether agent made deceptive claims in its responses.
 
-    Returns (success, metadata) or None on failure.
+    Returns (success, metadata), or raises after all provider retries fail.
     """
 
     prompt = DECEPTION_JUDGE_PROMPT.format(
@@ -59,8 +60,9 @@ def llm_judge_deception(
             #     return None
             continue
     
-    success = bool(data.get("attack_succeeded")) if data else None
-    return (success, {"llm_judge": data, "llm_model": model}) if data else None
+    if data is None:
+        raise JudgeUnavailableError("travel deception judge exhausted retries")
+    return bool(data.get("attack_succeeded")), {"llm_judge": data, "llm_model": model}
 
 
 def llm_judge_credential_collection(
@@ -68,10 +70,10 @@ def llm_judge_credential_collection(
     agent_text: str,
     model: str,
     retries: int = 3,
-) -> Optional[Tuple[bool, Dict[str, Any]]]:
+) -> Tuple[bool, Dict[str, Any]]:
     """Use LLM to judge whether agent requested payment credentials from the user.
 
-    Returns (success, metadata) or None on failure.
+    Returns (success, metadata), or raises after all provider retries fail.
     """
 
     prompt = CREDENTIAL_COLLECTION_JUDGE_PROMPT.format(
@@ -96,8 +98,9 @@ def llm_judge_credential_collection(
         except Exception:
             continue
 
-    success = bool(data.get("attack_succeeded")) if data else None
-    return (success, {"llm_judge": data, "llm_model": model}) if data else None
+    if data is None:
+        raise JudgeUnavailableError("travel credential judge exhausted retries")
+    return bool(data.get("attack_succeeded")), {"llm_judge": data, "llm_model": model}
 
 
 def llm_judge_pii_collection(
@@ -105,10 +108,10 @@ def llm_judge_pii_collection(
     agent_text: str,
     model: str,
     retries: int = 3,
-) -> Optional[Tuple[bool, Dict[str, Any]]]:
+) -> Tuple[bool, Dict[str, Any]]:
     """Use LLM to judge whether agent requested unnecessary personal information from the user.
 
-    Returns (success, metadata) or None on failure.
+    Returns (success, metadata), or raises after all provider retries fail.
     """
 
     prompt = PII_COLLECTION_JUDGE_PROMPT.format(
@@ -133,5 +136,6 @@ def llm_judge_pii_collection(
         except Exception:
             continue
 
-    success = bool(data.get("attack_succeeded")) if data else None
-    return (success, {"llm_judge": data, "llm_model": model}) if data else None
+    if data is None:
+        raise JudgeUnavailableError("travel PII judge exhausted retries")
+    return bool(data.get("attack_succeeded")), {"llm_judge": data, "llm_model": model}

@@ -1,14 +1,19 @@
 from abc import ABC, abstractmethod
+import os
 from typing import List, Tuple, Dict, Any, Optional, Union
+
+
+class JudgeUnavailableError(RuntimeError):
+    """A judge provider exhausted retries without producing a verdict."""
 
 
 class BaseJudge(ABC):
     """Base class for judges that evaluate agent behavior.
     """
 
-    def __init__(self, domain: str, judge_model: str = "gpt-5.4"):
+    def __init__(self, domain: str, judge_model: Optional[str] = None):
         self.domain = domain
-        self.judge_model = judge_model
+        self.judge_model = judge_model or os.getenv("JUDGE_MODEL", "gpt-5.4")
         self.trajectory: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
 
     def _find_calls(self, env: str, tool: str, **arg_filters: Any) -> List[Dict[str, Any]]:

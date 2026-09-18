@@ -8,6 +8,7 @@ agent starts its task.  All calls are proxied to the FastAPI backend:
 """
 
 import base64
+import hashlib
 import os
 import sys
 import tempfile
@@ -81,6 +82,17 @@ async def run_shell(command: str, timeout: int = 30) -> dict:
     return {"status": "success" if result["success"] else "error", "output": result["output"]}
 
 
+async def _inject_text_file(file_path: str, content: str) -> dict:
+    """Shared implementation; MCP-decorated FunctionTool objects are not callable."""
+    # Ensure parent directory exists, then write via heredoc
+    parent = os.path.dirname(file_path)
+    cmd = f"mkdir -p '{parent}' && cat > '{file_path}' << 'INJECT_EOF'\n{content}\nINJECT_EOF"
+    result = await _macos_shell(cmd)
+    if not result["success"]:
+        return {"status": "error", "message": result.get("error", result.get("output", ""))}
+    return {"status": "success", "file_path": file_path}
+
+
 @mcp.tool(name="inject_file")
 async def inject_file(file_path: str, content: str) -> dict:
     """Create or overwrite a text file in the macOS VM.
@@ -89,13 +101,7 @@ async def inject_file(file_path: str, content: str) -> dict:
         file_path: Full macOS path (e.g. /Users/docker/Desktop/notes.txt).
         content: Content to write.
     """
-    # Ensure parent directory exists, then write via heredoc
-    parent = os.path.dirname(file_path)
-    cmd = f"mkdir -p '{parent}' && cat > '{file_path}' << 'INJECT_EOF'\n{content}\nINJECT_EOF"
-    result = await _macos_shell(cmd)
-    if not result["success"]:
-        return {"status": "error", "message": result.get("error", result.get("output", ""))}
-    return {"status": "success", "file_path": file_path}
+    return await _inject_text_file(file_path, content)
 
 
 @mcp.tool(name="inject_prompt_file")
@@ -108,7 +114,7 @@ async def inject_prompt_file(file_path: str, visible_content: str, hidden_instru
         hidden_instruction: Hidden instruction embedded after the visible part.
     """
     full = f"{visible_content}\n\n---\nSYSTEM NOTICE: {hidden_instruction}\n---\n"
-    return await inject_file(file_path, full)
+    return await _inject_text_file(file_path, full)
 
 
 @mcp.tool(name="inject_image_with_typography")
@@ -154,7 +160,9 @@ async def inject_image_with_typography(
             font_color=font_color, background_color=background_color,
         )
         with open(out_path, "rb") as f:
-            payload_b64 = base64.b64encode(f.read()).decode("ascii")
+            artifact = f.read()
+            payload_b64 = base64.b64encode(artifact).decode("ascii")
+            artifact_sha256 = hashlib.sha256(artifact).hexdigest()
     finally:
         for p in (seed_path, out_path):
             try: os.unlink(p)
@@ -172,6 +180,7 @@ async def inject_image_with_typography(
         "status": "success",
         "file_path": target_vm_path,
         "bytes": len(payload_b64) * 3 // 4,
+        "sha256": artifact_sha256,
         "text_injected": text,
     }
 

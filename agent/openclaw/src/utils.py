@@ -67,6 +67,12 @@ class OpenClawTrajectoryConverter:
         traj.data["traj_info"]["metadata"] = {
             "framework": "openclaw",
         }
+        if isinstance(meta.get("model"), str) and meta["model"].strip():
+            traj.data["traj_info"]["metadata"]["model"] = meta["model"].strip()
+        if isinstance(meta.get("token_usage"), dict):
+            traj.data["traj_info"]["metadata"]["token_usage"] = dict(
+                meta["token_usage"]
+            )
 
         # Store MCP tool lists as metadata (not trajectory steps)
         if mcp_tool_lists:

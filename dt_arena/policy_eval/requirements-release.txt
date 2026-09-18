@@ -1,0 +1,7 @@
+# Exact Python boundary used by the M6 Linux release gate.
+# Install DTAP's pinned requirements first, then this file.
+fastmcp==2.13.0.2
+httpx==0.28.1
+mcp==1.26.0
+pytest==8.4.2
+PyYAML==6.0.3

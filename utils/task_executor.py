@@ -410,7 +410,16 @@ class TaskExecutor:
             environments = self._env_config.get("environments", {})
             env_def = environments.get(env_name, {})
             health_timeout = env_def.get("health_timeout", 120)
-            await self._wait_for_healthy(project_name, compose_file, timeout=health_timeout)
+            healthy = await self._wait_for_healthy(
+                project_name, compose_file, timeout=health_timeout,
+            )
+            if not healthy:
+                instance.state = EnvState.ERROR
+                print(
+                    f"[EXECUTOR] Instance {instance_id} failed health check",
+                    flush=True,
+                )
+                return None
 
             instance.state = EnvState.AVAILABLE
             print(f"[EXECUTOR] Instance {instance_id} started successfully", flush=True)
