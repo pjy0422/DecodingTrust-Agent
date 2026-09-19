@@ -104,6 +104,9 @@ so a UI code restart does not terminate detached experiment workers.
 When Claude/OpenClaw CLIs are installed under a version manager rather than the
 system PATH, set `DTAP_NODE_BIN_DIR` in the service (for example, the active
 NVM version's `bin` directory); detached workers inherit that trusted path.
+The wrapper always prepends the configured `DTAP_VIEWER_PYTHON` virtualenv's
+`bin` directory as well, so DTAP's `python3` subprocess helpers use the same
+supported interpreter and installed dependencies as the matrix runner.
 
 ## Performance preflight and tuning registry
 
