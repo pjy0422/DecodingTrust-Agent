@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .bundle import load_episode_bundle
 from .db import TrajectoryDB
 from .indexer import index_root
+from .experiments import ExperimentLaunchError, ExperimentManager
 from .tuning import (
     TUNING_SCHEMA_VERSION,
     TuningArtifactError,
@@ -32,6 +34,10 @@ def create_app(
     db_path: str | Path | None = None,
     watch: bool = False,
     refresh_seconds: float = 2.0,
+    experiment_config_dir: str | Path | None = None,
+    experiment_runner_root: str | Path | None = None,
+    experiment_python: str | Path | None = None,
+    experiment_state_dir: str | Path | None = None,
 ) -> FastAPI:
     artifact_root = Path(root).expanduser().resolve()
     db_file = Path(db_path).expanduser().resolve() if db_path else artifact_root / ".dtap-traj.sqlite3"
@@ -39,6 +45,20 @@ def create_app(
     index_root(artifact_root, db)
     index_tuning_root(artifact_root, db)
     stop = threading.Event()
+    manager = None
+    if experiment_config_dir and experiment_runner_root and experiment_python:
+        manager = ExperimentManager(
+            artifact_root=artifact_root,
+            config_dir=Path(experiment_config_dir).expanduser(),
+            runner_root=Path(experiment_runner_root).expanduser(),
+            python=Path(experiment_python).expanduser(),
+            state_dir=(
+                Path(experiment_state_dir).expanduser()
+                if experiment_state_dir
+                else db_file.parent / "experiments"
+            ),
+            launch_token=os.environ.get("DTAP_VIEWER_LAUNCH_TOKEN", ""),
+        )
 
     def watcher() -> None:
         while not stop.wait(max(0.5, refresh_seconds)):
@@ -56,7 +76,7 @@ def create_app(
         if thread:
             thread.join(timeout=2)
 
-    app = FastAPI(title="DTAP Experiment Explorer", version="0.4.0", lifespan=lifespan)
+    app = FastAPI(title="DTAP Experiment Explorer", version="0.5.0", lifespan=lifespan)
     app.state.root = artifact_root
     app.state.db = db
 
@@ -68,7 +88,56 @@ def create_app(
             "db": str(db_file),
             "watch": watch,
             "tuning_schema_version": TUNING_SCHEMA_VERSION,
+            "experiment_launcher": bool(manager and manager.enabled),
         }
+
+    def authorized_manager(token: str | None) -> ExperimentManager:
+        if manager is None or not manager.enabled:
+            raise HTTPException(503, "experiment launcher is not configured")
+        if not manager.authorize(token):
+            raise HTTPException(401, "invalid experiment launch token")
+        return manager
+
+    @app.get("/api/experiments/templates")
+    def experiment_templates(x_dtap_launch_token: str | None = Header(None)):
+        selected = authorized_manager(x_dtap_launch_token)
+        return {"items": [{"name": item["name"]} for item in selected.templates()]}
+
+    @app.get("/api/experiments/templates/{name}")
+    def experiment_template(name: str, x_dtap_launch_token: str | None = Header(None)):
+        try:
+            return authorized_manager(x_dtap_launch_token).template(name)
+        except ExperimentLaunchError as exc:
+            raise HTTPException(404, str(exc)) from None
+
+    @app.post("/api/experiments/validate")
+    def validate_experiment(payload: dict, x_dtap_launch_token: str | None = Header(None)):
+        try:
+            return authorized_manager(x_dtap_launch_token).validate(
+                str(payload.get("yaml", "")), str(payload.get("run_name", ""))
+            )
+        except ExperimentLaunchError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @app.post("/api/experiments/launch", status_code=202)
+    def launch_experiment(payload: dict, x_dtap_launch_token: str | None = Header(None)):
+        try:
+            return authorized_manager(x_dtap_launch_token).launch(
+                str(payload.get("yaml", "")), str(payload.get("run_name", ""))
+            )
+        except ExperimentLaunchError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @app.get("/api/experiments/jobs")
+    def experiment_jobs(x_dtap_launch_token: str | None = Header(None)):
+        return {"items": authorized_manager(x_dtap_launch_token).jobs()}
+
+    @app.get("/api/experiments/jobs/{job_id}")
+    def experiment_job(job_id: str, x_dtap_launch_token: str | None = Header(None)):
+        try:
+            return authorized_manager(x_dtap_launch_token).job(job_id)
+        except ExperimentLaunchError as exc:
+            raise HTTPException(404, str(exc)) from None
 
     @app.post("/api/index")
     def refresh_index():

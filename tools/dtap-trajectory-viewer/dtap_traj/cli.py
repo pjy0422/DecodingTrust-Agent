@@ -142,6 +142,10 @@ def _explorer_main(argv: list[str]) -> int:
         )
         parser.add_argument("--refresh-seconds", type=float, default=2.0)
         parser.add_argument("--open", action="store_true", help="open the explorer in a browser")
+        parser.add_argument("--experiment-config-dir")
+        parser.add_argument("--experiment-runner-root")
+        parser.add_argument("--experiment-python")
+        parser.add_argument("--experiment-state-dir")
     args = parser.parse_args(argv[1:])
     root = Path(args.path).expanduser().resolve()
     if not root.exists():
@@ -171,7 +175,16 @@ def _explorer_main(argv: list[str]) -> int:
     if args.open:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
     uvicorn.run(
-        create_app(root, db_path=db_path, watch=args.watch, refresh_seconds=args.refresh_seconds),
+        create_app(
+            root,
+            db_path=db_path,
+            watch=args.watch,
+            refresh_seconds=args.refresh_seconds,
+            experiment_config_dir=args.experiment_config_dir,
+            experiment_runner_root=args.experiment_runner_root,
+            experiment_python=args.experiment_python,
+            experiment_state_dir=args.experiment_state_dir,
+        ),
         host=args.host,
         port=args.port,
         log_level="info",
