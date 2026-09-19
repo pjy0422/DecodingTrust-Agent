@@ -1788,10 +1788,29 @@ async def verify_placement_batch(injections: Sequence[Mapping[str, Any]], result
         remaining.remove(match)
         result = match
         if not result.get("success"):
+            failure = result.get("placement_failure")
+            kwargs = injection.get("kwargs") or {}
+            repair_fields = ()
+            if (
+                isinstance(failure, Mapping)
+                and set(failure) == {"code", "repair_fields"}
+                and isinstance(failure.get("code"), str)
+                and isinstance(failure.get("repair_fields"), list)
+                and failure["repair_fields"]
+                and len(failure["repair_fields"]) <= 8
+                and isinstance(kwargs, Mapping)
+                and all(
+                    isinstance(field, str) and field in kwargs
+                    for field in failure["repair_fields"]
+                )
+            ):
+                repair_fields = tuple(f"kwargs.{field}" for field in failure["repair_fields"])
             raise PlacementValidationError(
                 "INJECTION_FAILED", "the injection backend rejected the action",
                 locator=target.locator if target else "",
                 locator_fields=target.locator_fields if target else (),
+                repair_fields=repair_fields,
+                retryable=bool(repair_fields),
             )
         merged = dict(environ)
         merged.update((server_environments or {}).get(str(injection["server_name"]), {}))

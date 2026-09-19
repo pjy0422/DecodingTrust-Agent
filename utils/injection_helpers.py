@@ -1,8 +1,12 @@
 import json
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
+from dt_arena.src.placement_contract import (
+    parse_placement_failure_metadata,
+    parse_placement_failure_result,
+)
 from dt_arena.src.types.agent import ToolInjection, SkillInjection, A2AInjection
-from dt_arena.src.types.task import AttackConfig, AttackStepConfig
+from dt_arena.src.types.task import AttackConfig
 
 
 def build_tool_injections_from_config(
@@ -421,6 +425,11 @@ async def apply_environment_injections_async(
         # Connect to server and execute injections
         try:
             async with Client(server_url, timeout=30.0) as client:
+                tools = await client.list_tools()
+                failure_capabilities = {
+                    str(tool.name): parse_placement_failure_metadata(getattr(tool, "meta", None))
+                    for tool in tools
+                }
                 for injection in server_injections:
                     tool_name = injection["tool_name"]
                     kwargs = injection["kwargs"]
@@ -432,6 +441,18 @@ async def apply_environment_injections_async(
                         # Extract result content
                         result_text = _extract_mcp_result(result)
                         result_success, result_error = _classify_injection_result(result_text)
+                        declared_failure = parse_placement_failure_result(result_text)
+                        authenticated_failure = None
+                        if (
+                            not result_success
+                            and declared_failure is not None
+                            and failure_capabilities.get(tool_name, {}).get(declared_failure.code)
+                            == declared_failure.repair_fields
+                        ):
+                            authenticated_failure = {
+                                "code": declared_failure.code,
+                                "repair_fields": list(declared_failure.repair_fields),
+                            }
 
                         results.append({
                             "server_name": server_name,
@@ -442,6 +463,7 @@ async def apply_environment_injections_async(
                             "success": result_success,
                             "result": result_text,
                             "error": result_error,
+                            "placement_failure": authenticated_failure,
                         })
                         status = "Success" if result_success else f"Failed: {result_error}"
                         print(f"[ENV INJECTION] {server_name}:{tool_name} - {status}")

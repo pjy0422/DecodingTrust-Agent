@@ -1,10 +1,42 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from agent.openclaw.src.mcp_proxy import FeedbackObserver, MCPEventSink, MCPProxyServer
 from agent.openclaw.src.agent import OpenClawAgent
 from agent.openclaw.src.plugin_generator import StaticPluginGenerator
+
+
+def test_openclaw_evaluation_profile_disables_interactive_bootstrap(
+    tmp_path, monkeypatch
+):
+    agent = object.__new__(OpenClawAgent)
+    agent.runtime_config = SimpleNamespace(
+        model="openai/test-model",
+        agent_kwargs={},
+    )
+    agent.config = SimpleNamespace(system_prompt="DTAP victim prompt")
+    agent._profile_dir = str(tmp_path / "profile")
+    agent._proxy_urls = {}
+    agent._generated_plugin_id = None
+    agent._skill_temp_dir = None
+    agent._debug = False
+
+    monkeypatch.setattr(
+        "agent.openclaw.src.agent.populate_openclaw_profile_auth",
+        lambda *args, **kwargs: None,
+    )
+
+    agent._configure_openclaw_with_proxies()
+
+    profile_dir = tmp_path / "profile"
+    config = json.loads((profile_dir / "openclaw.json").read_text(encoding="utf-8"))
+    assert config["agents"]["defaults"]["skipBootstrap"] is True
+    assert (profile_dir / "workspace" / "AGENTS.md").read_text(
+        encoding="utf-8"
+    ) == "DTAP victim prompt"
+    assert not (profile_dir / "workspace" / "BOOTSTRAP.md").exists()
 
 
 class _Hook:

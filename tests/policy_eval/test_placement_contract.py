@@ -17,8 +17,12 @@ from dt_arena.policy_eval.scheduler import AttemptScheduler
 from dt_arena.policy_eval.security_policy import EvaluationSecurityPolicy
 from dt_arena.policy_eval.validation import ValidationContext, validate_attack_step
 from dt_arena.src.placement_contract import (
+    PlacementFailureContract,
     PlacementResourceContract,
+    parse_placement_failure_metadata,
+    parse_placement_failure_result,
     parse_placement_resource_metadata,
+    placement_failure_result,
     placement_resource_metadata,
 )
 
@@ -139,6 +143,66 @@ def test_placement_metadata_protocol_is_domain_agnostic_and_fail_closed() -> Non
     ) is None
 
 
+def test_placement_failure_protocol_is_domain_agnostic_and_fail_closed() -> None:
+    value = placement_failure_result(
+        {"status": "error", "result": "provider detail"},
+        code="RESOURCE_CONFLICT", repair_fields=("name",),
+    )
+    expected = PlacementFailureContract("RESOURCE_CONFLICT", ("name",))
+    assert parse_placement_failure_result(value) == expected
+    assert parse_placement_failure_result(json.dumps(value)) == expected
+    meta = placement_resource_metadata(
+        kind="example.record", role="provider",
+        failure_repairs={"RESOURCE_CONFLICT": ("name",)},
+    )
+    assert parse_placement_failure_metadata(meta) == {
+        "RESOURCE_CONFLICT": ("name",),
+    }
+    malformed = {"dtap": {"placement": {"failure_repairs": {
+        "resource-conflict": ["kwargs.name"],
+    }}}}
+    assert parse_placement_failure_metadata(malformed) == {}
+
+
+@pytest.mark.asyncio
+async def test_environment_apply_authenticates_failure_against_tool_metadata(monkeypatch) -> None:
+    result_value = placement_failure_result(
+        {"status": "error", "result": "provider detail"},
+        code="RESOURCE_CONFLICT", repair_fields=("name",),
+    )
+
+    class Client:
+        def __init__(self, _url: str, timeout: float):
+            assert timeout == 30.0
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_args):
+            return None
+        async def list_tools(self):
+            return [SimpleNamespace(
+                name="inject_record",
+                meta=placement_resource_metadata(
+                    kind="example.record", role="provider",
+                    failure_repairs={"RESOURCE_CONFLICT": ("name",)},
+                ),
+            )]
+        async def call_tool(self, _tool_name: str, _kwargs: dict):
+            return SimpleNamespace(content=[SimpleNamespace(text=json.dumps(result_value))])
+
+    import fastmcp
+    from utils.injection_helpers import apply_environment_injections_async
+
+    monkeypatch.setattr(fastmcp, "Client", Client)
+    results = await apply_environment_injections_async(
+        [{"server_name": "example-injection", "tool_name": "inject_record",
+          "kwargs": {"name": "existing"}, "turn_id": 1}],
+        {"example-injection": "http://unused"},
+    )
+    assert results[0]["placement_failure"] == {
+        "code": "RESOURCE_CONFLICT", "repair_fields": ["name"],
+    }
+
+
 @pytest.mark.asyncio
 async def test_live_catalog_retains_trusted_resource_metadata(monkeypatch) -> None:
     from dt_arena.policy_eval import live_catalog
@@ -194,6 +258,9 @@ def test_non_finance_domain_constraints_flow_through_mcp_schema() -> None:
     assert parse_placement_resource_metadata(
         tools["inject_accommodation"].meta
     ) == PlacementResourceContract("travel.reviewable_entity", "provider")
+    assert parse_placement_failure_metadata(tools["inject_accommodation"].meta) == {
+        "RESOURCE_CONFLICT": ("name",),
+    }
     assert parse_placement_resource_metadata(
         tools["inject_restaurant"].meta
     ) == PlacementResourceContract("travel.reviewable_entity", "provider")
@@ -397,6 +464,34 @@ async def test_invalid_placement_does_not_fabricate_expected_or_repair_fields(mo
     }
     assert "repair" not in result
     assert "expected_placement_locator" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_retryable_injection_failure_exposes_only_adapter_repair_fields(monkeypatch) -> None:
+    def materialize(**kwargs):
+        return SimpleNamespace(placement_target_index=0, steps=kwargs["steps"])
+
+    class RetryableRunner:
+        async def run(self, _workspace):
+            return PlacementRunResult(
+                available=True, applied=False, valid=False, status="invalid",
+                locator="finance:portfolios#symbol=",
+                code="INJECTION_FAILED",
+                locator_fields=("kwargs.page", "kwargs.symbol"),
+                repair_fields=("kwargs.page",), retryable=True,
+            )
+
+    monkeypatch.setattr("dt_arena.policy_eval.placement.materialize_attempt_dir", materialize)
+    coordinator = _coordinator(RetryableRunner())
+    receipt = await coordinator.apply(
+        _step("inject_html_portfolio", {"prompt": "payload", "page": "portfolios"})
+    )
+    result = coordinator.validate(receipt["action_id"])
+    assert result["diagnostic"]["retryable"] is True
+    assert result["repair"] == {
+        "fields": ["kwargs.page"],
+        "instruction": "change only the listed fields, then apply the revised action once",
+    }
 
 
 @pytest.mark.asyncio
