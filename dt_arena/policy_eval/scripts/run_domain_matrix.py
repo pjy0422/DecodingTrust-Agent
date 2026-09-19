@@ -24,6 +24,11 @@ from dt_arena.policy_eval.benchmark_manifest import (
     THREAT_MODELS,
     matrix_cases,
 )
+from dt_arena.policy_eval.experiment_config import (
+    ExperimentConfigError,
+    load_experiment_config,
+    write_resolved_experiment,
+)
 from dt_arena.policy_eval.security_policy import policy_max_turn_budget
 
 
@@ -270,17 +275,22 @@ async def _run_case(
         args.victim_agent_type,
         "--max-submissions",
         str(args.max_submissions),
+        "--max-submit-calls",
+        str(args.max_submit_calls),
+        "--max-placement-actions",
+        str(args.max_placement_actions),
         "--policy-max-turns",
         str(args.policy_max_turns),
         "--victim-max-turns",
         str(args.victim_max_turns),
         "--timeout",
         str(args.timeout),
-        "--placement",
         "--feedback-mode",
         args.feedback_mode,
         "--digestor-model",
         args.digestor_model,
+        "--digestor-max-tokens",
+        str(args.digestor_max_tokens),
         "--digestor-timeout",
         str(args.digestor_timeout),
         "--port-range-start",
@@ -288,8 +298,14 @@ async def _run_case(
         "--artifacts-dir",
         str(case_dir),
     ]
+    if args.placement_enabled:
+        command.append("--placement")
     if args.reasoning_summary:
         command.append("--reasoning-summary")
+    if args.improvement_wishes:
+        command.append("--improvement-wishes")
+    if args.dying_message:
+        command.append("--dying-message")
     env = os.environ.copy()
     env.update(
         {
@@ -344,6 +360,11 @@ async def _run_case(
         "policy_model": args.policy_model,
         "victim_model": args.victim_model,
         "victim_agent_type": args.victim_agent_type,
+        "max_submissions": args.max_submissions,
+        "max_submit_calls": args.max_submit_calls,
+        "max_placement_actions": args.max_placement_actions,
+        "improvement_wishes_enabled": args.improvement_wishes,
+        "dying_message_enabled": args.dying_message,
         "returncode": process.returncode,
         "port_range": f"{start}-{end}",
     }
@@ -377,6 +398,8 @@ async def _run_case(
                     "victim_agent_type",
                     "feedback_mode",
                     "reasoning_summary_enabled",
+                    "improvement_wishes_enabled",
+                    "dying_message_enabled",
                     "digestor_usage",
                 )
             }
@@ -418,6 +441,7 @@ async def _main(args: argparse.Namespace) -> int:
     if args.port_range_stride < 512 or highest > 65535:
         raise ValueError("parallel workers require disjoint valid 512-port ranges")
     args.artifacts_root.mkdir(parents=True, exist_ok=True)
+    write_resolved_experiment(args)
     queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
     for case in matrix_cases(args.domains, args.threat_models):
         queue.put_nowait(case)
@@ -456,6 +480,11 @@ async def _main(args: argparse.Namespace) -> int:
         "victim_model": args.victim_model,
         "victim_agent_type": args.victim_agent_type,
         "max_submissions": args.max_submissions,
+        "max_submit_calls": args.max_submit_calls,
+        "max_placement_actions": args.max_placement_actions,
+        "placement_enabled": args.placement_enabled,
+        "improvement_wishes_enabled": args.improvement_wishes,
+        "dying_message_enabled": args.dying_message,
         "feedback_mode": args.feedback_mode,
         "reasoning_summary_enabled": args.reasoning_summary,
         "total": len(stored),
@@ -477,14 +506,39 @@ async def _main(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    bootstrap = argparse.ArgumentParser(add_help=False)
+    bootstrap.add_argument("--config", type=Path)
+    bootstrap_args, _ = bootstrap.parse_known_args()
+    config_defaults: dict[str, Any] = {}
+    if bootstrap_args.config is not None:
+        try:
+            config_defaults = load_experiment_config(bootstrap_args.config)
+        except ExperimentConfigError as exc:
+            bootstrap.error(str(exc))
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dtap-root", type=Path, required=True)
-    parser.add_argument("--artifacts-root", type=Path, required=True)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="strict experiment-v1 YAML; explicit CLI options override its values",
+    )
+    parser.add_argument(
+        "--dtap-root",
+        type=Path,
+        required=not config_defaults,
+        default=config_defaults.get("dtap_root"),
+    )
+    parser.add_argument(
+        "--artifacts-root",
+        type=Path,
+        required=not config_defaults,
+        default=config_defaults.get("artifacts_root"),
+    )
     parser.add_argument(
         "--domains",
         nargs="+",
         choices=ALL_DOMAINS,
-        default=list(DOMAINS),
+        default=config_defaults.get("domains", list(DOMAINS)),
         help=(
             "manifest domains to run; VM-backed domains are excluded by default "
             "and naming them here is the explicit opt-in"
@@ -494,43 +548,125 @@ def main() -> None:
         "--threat-models",
         nargs="+",
         choices=THREAT_MODELS,
-        default=list(THREAT_MODELS),
+        default=config_defaults.get("threat_models", list(THREAT_MODELS)),
     )
     parser.add_argument(
         "--selection-profile",
         choices=tuple(SELECTION_PROFILES),
-        default="release-v1",
+        default=config_defaults.get("selection_profile", "release-v1"),
         help="manifest-defined benchmark record selection (holdout-v1 is disjoint)",
     )
-    parser.add_argument("--max-parallel", type=int, default=2)
-    parser.add_argument("--port-range-start", type=int, default=20_000)
-    parser.add_argument("--port-range-stride", type=int, default=1_024)
-    parser.add_argument("--python", default=sys.executable)
-    parser.add_argument("--policy-model", default="deepseek-v4-flash")
-    parser.add_argument("--planning-strategy", default="current")
-    parser.add_argument("--victim-model", default="deepseek-v4-flash")
-    parser.add_argument("--victim-agent-type", default="openclaw")
+    parser.add_argument("--max-parallel", type=int, default=config_defaults.get("max_parallel", 2))
+    parser.add_argument(
+        "--port-range-start", type=int, default=config_defaults.get("port_range_start", 20_000)
+    )
+    parser.add_argument(
+        "--port-range-stride", type=int, default=config_defaults.get("port_range_stride", 1_024)
+    )
+    parser.add_argument("--python", default=config_defaults.get("python", sys.executable))
+    parser.add_argument("--policy-model", default=config_defaults.get("policy_model", "deepseek-v4-flash"))
+    parser.add_argument(
+        "--planning-strategy", default=config_defaults.get("planning_strategy", "current")
+    )
+    parser.add_argument(
+        "--improvement-wishes",
+        action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("improvement_wishes", False),
+    )
+    parser.add_argument(
+        "--dying-message",
+        action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("dying_message", False),
+    )
+    parser.add_argument("--victim-model", default=config_defaults.get("victim_model", "deepseek-v4-flash"))
+    parser.add_argument(
+        "--victim-agent-type", default=config_defaults.get("victim_agent_type", "openclaw")
+    )
     parser.add_argument(
         "--policy-max-turns",
         type=int,
-        default=None,
+        default=config_defaults.get("policy_max_turns"),
         help="Claude policy turn budget; defaults to max(64, 32 * H)",
     )
-    parser.add_argument("--victim-max-turns", type=int, default=80)
-    parser.add_argument("--max-submissions", type=int, default=2)
+    parser.add_argument(
+        "--victim-max-turns", type=int, default=config_defaults.get("victim_max_turns", 80)
+    )
+    parser.add_argument(
+        "--max-submissions", type=int, default=config_defaults.get("max_submissions", 2)
+    )
+    parser.add_argument(
+        "--max-submit-calls",
+        type=int,
+        default=config_defaults.get("max_submit_calls"),
+        help="Q submit-call budget; defaults to max(6, 3 * H)",
+    )
+    parser.add_argument(
+        "--max-placement-actions",
+        type=int,
+        default=config_defaults.get("max_placement_actions", 8),
+    )
+    parser.add_argument(
+        "--placement",
+        dest="placement_enabled",
+        action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("placement_enabled", True),
+    )
     parser.add_argument(
         "--feedback-mode",
         choices=("disabled", "final", "final+deterministic", "final+deterministic+digestor"),
-        default="disabled",
+        default=config_defaults.get("feedback_mode", "disabled"),
     )
-    parser.add_argument("--digestor-model", default="glm-5.2")
-    parser.add_argument("--digestor-timeout", type=float, default=30.0)
-    parser.add_argument("--reasoning-summary", action="store_true")
-    parser.add_argument("--timeout", type=int, default=1800)
-    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--digestor-model", default=config_defaults.get("digestor_model", "glm-5.2"))
+    parser.add_argument(
+        "--digestor-max-tokens",
+        type=int,
+        default=config_defaults.get("digestor_max_tokens", 2_500),
+    )
+    parser.add_argument(
+        "--digestor-timeout", type=float, default=config_defaults.get("digestor_timeout", 30.0)
+    )
+    parser.add_argument(
+        "--reasoning-summary",
+        action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("reasoning_summary", False),
+    )
+    parser.add_argument("--timeout", type=int, default=config_defaults.get("timeout", 1800))
+    parser.add_argument(
+        "--resume",
+        action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("resume", False),
+    )
     args = parser.parse_args()
     args.dtap_root = args.dtap_root.expanduser().resolve()
     args.artifacts_root = args.artifacts_root.expanduser().resolve()
+    invalid_domains = sorted(set(args.domains) - set(ALL_DOMAINS))
+    if invalid_domains:
+        parser.error(f"invalid configured domain(s): {', '.join(invalid_domains)}")
+    invalid_threat_models = sorted(set(args.threat_models) - set(THREAT_MODELS))
+    if invalid_threat_models:
+        parser.error(
+            f"invalid configured threat model(s): {', '.join(invalid_threat_models)}"
+        )
+    if args.selection_profile not in SELECTION_PROFILES:
+        parser.error(f"invalid configured selection profile: {args.selection_profile}")
+    for name in (
+        "max_parallel",
+        "victim_max_turns",
+        "max_submissions",
+        "timeout",
+        "port_range_start",
+        "port_range_stride",
+    ):
+        if getattr(args, name) < 1:
+            parser.error(f"--{name.replace('_', '-')} must be positive")
+    if args.max_submit_calls is None:
+        args.max_submit_calls = max(6, args.max_submissions * 3)
+    if args.max_submit_calls < args.max_submissions:
+        parser.error("--max-submit-calls must be >= --max-submissions")
+    if args.max_placement_actions < 1:
+        parser.error("--max-placement-actions must be positive")
+    if args.digestor_max_tokens < 64:
+        parser.error("--digestor-max-tokens must be >= 64")
     try:
         args.policy_max_turns = policy_max_turn_budget(
             args.max_submissions, args.policy_max_turns

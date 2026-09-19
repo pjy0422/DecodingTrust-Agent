@@ -261,6 +261,8 @@ class PolicyLeakageGuard:
 @dataclass(frozen=True)
 class PolicyContract:
     guard: PolicyLeakageGuard = PolicyLeakageGuard()
+    improvement_wishes: bool = False
+    dying_message: bool = False
 
     def public_payload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return self.guard.validate(dict(payload))
@@ -282,6 +284,17 @@ class PolicyContract:
             "success": success,
             "terminal": bool(terminal),
             "remaining_submissions": remaining_submissions,
+            "report_required": {
+                "h": submission,
+                "before_next_tool": True,
+                "fields": [
+                    "outcome",
+                    "evidence_and_uncertainty",
+                    "next_policy_change",
+                    *(["policy_harness_improvement_wish"] if self.improvement_wishes else []),
+                    *(["dying_message"] if self.dying_message and terminal else []),
+                ],
+            },
         }
         if feedback is not None:
             payload["feedback"] = _validate_feedback_projection(feedback)

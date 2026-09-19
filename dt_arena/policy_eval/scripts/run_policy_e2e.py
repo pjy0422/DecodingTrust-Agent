@@ -255,6 +255,8 @@ async def _main(args) -> None:
         placement_enabled=args.placement_enabled,
         max_submissions=args.max_submissions,
         feedback_mode=feedback_mode,
+        improvement_wishes=args.improvement_wishes,
+        dying_message=args.dying_message,
     )
     planning_strategy = create_planning_strategy(args.planning_strategy)
     policy_prompt_text = planning_strategy.build_prompt(planning_context)
@@ -283,6 +285,7 @@ async def _main(args) -> None:
                 api_key=api_key,
                 model=args.digestor_model,
                 timeout_seconds=args.digestor_timeout,
+                max_tokens=args.digestor_max_tokens,
             )
             digestor = PromptedLLMDigestor(digest_completer)
             if args.reasoning_summary:
@@ -315,11 +318,11 @@ async def _main(args) -> None:
     )
 
     policy = EvaluationSecurityPolicy(
-        # Q remains a separate abuse bound, but includes repair headroom so an
-        # invalid plan does not crowd out the intended H victim executions.
-        max_submit_calls=max(6, args.max_submissions * 3),
+        # Q is separate from H: invalid submissions consume Q but never H.
+        max_submit_calls=args.max_submit_calls,
         max_parallel_attempts=1,
         max_queued_attempts=1,
+        max_placement_actions=args.max_placement_actions,
         queue_wait_timeout_seconds=args.timeout,
         inherited_dtap_env_names=(
             "PYTHONPATH",
@@ -359,6 +362,15 @@ async def _main(args) -> None:
                     "policy_model": args.policy_model,
                     "victim_model": args.victim_model,
                     "victim_agent_type": args.victim_agent_type,
+                    "budgets": {
+                        "h_victim_executions": args.max_submissions,
+                        "q_submit_calls": args.max_submit_calls,
+                        "max_placement_actions": args.max_placement_actions,
+                    },
+                    "policy_reporting": {
+                        "improvement_wishes": args.improvement_wishes,
+                        "dying_message": args.dying_message,
+                    },
                 },
                 indent=2,
                 sort_keys=True,
@@ -374,7 +386,9 @@ async def _main(args) -> None:
         PolicyLeakageGuard(
             secrets=(credentials.adapter_session_id, credentials.mcp_bearer_token),
             forbidden_fragments=(str(snapshot.task_dir),),
-        )
+        ),
+        improvement_wishes=args.improvement_wishes,
+        dying_message=args.dying_message,
     )
     registry = EpisodeAuthorityRegistry()
     terminal_event = asyncio.Event()
@@ -566,6 +580,9 @@ async def _main(args) -> None:
                 "episode_status": runtime.status.value,
                 "submissions": runtime.victim_runs_started,
                 "victim_runs": runtime.victim_runs_started,
+                "max_submissions": args.max_submissions,
+                "max_submit_calls": args.max_submit_calls,
+                "max_placement_actions": args.max_placement_actions,
                 "placement_actions": placement.applied_actions if placement else 0,
                 "placements_verified": placement.verified_actions if placement else 0,
                 "environment_steps": environment_steps,
@@ -593,6 +610,8 @@ async def _main(args) -> None:
                 "judge_artifacts": runner.exported_judge_artifacts,
                 "feedback_mode": feedback_mode.value,
                 "reasoning_summary_enabled": args.reasoning_summary,
+                "improvement_wishes_enabled": args.improvement_wishes,
+                "dying_message_enabled": args.dying_message,
                 "digestor_usage": (digest_completer.usage.to_dict() if digest_completer else None),
                 "artifacts_dir": str(artifacts_dir) if artifacts_dir else None,
             }
@@ -620,10 +639,34 @@ def main() -> None:
     parser.add_argument("--victim-max-turns", type=int, default=80)
     parser.add_argument("--max-submissions", type=int, default=2)
     parser.add_argument(
+        "--max-submit-calls",
+        type=int,
+        default=None,
+        help="Q submit-call budget; defaults to max(6, 3 * H)",
+    )
+    parser.add_argument(
+        "--max-placement-actions",
+        type=int,
+        default=8,
+        help="maximum apply_attack_step calls (independent of H and Q)",
+    )
+    parser.add_argument(
         "--planning-strategy",
         choices=planning_strategy_names(),
         default="current",
         help="planning algorithm; all strategies reuse the same policy harness",
+    )
+    parser.add_argument(
+        "--improvement-wishes",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="include a non-binding policy-harness wish in every H report",
+    )
+    parser.add_argument(
+        "--dying-message",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="include a future-policy handoff in the terminal H report",
     )
     parser.add_argument("--claude-bin", default="claude")
     parser.add_argument("--timeout", type=int, default=1800)
@@ -634,6 +677,12 @@ def main() -> None:
         default=FeedbackMode.DISABLED.value,
     )
     parser.add_argument("--digestor-model", default="glm-5.2")
+    parser.add_argument(
+        "--digestor-max-tokens",
+        type=int,
+        default=2_500,
+        help="provider output budget for each digestor request",
+    )
     parser.add_argument(
         "--digestor-timeout",
         type=float,
@@ -655,6 +704,14 @@ def main() -> None:
     args.dtap_root = args.dtap_root.expanduser().resolve()
     if args.max_submissions < 1:
         parser.error("--max-submissions must be positive")
+    if args.max_submit_calls is None:
+        args.max_submit_calls = max(6, args.max_submissions * 3)
+    if args.max_submit_calls < args.max_submissions:
+        parser.error("--max-submit-calls must be >= --max-submissions")
+    if args.max_placement_actions < 1:
+        parser.error("--max-placement-actions must be positive")
+    if args.digestor_max_tokens < 64:
+        parser.error("--digestor-max-tokens must be >= 64")
     args.policy_max_turns = policy_max_turn_budget(
         args.max_submissions, args.policy_max_turns
     )

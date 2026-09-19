@@ -14,6 +14,8 @@ class PlanningContext:
     placement_enabled: bool
     max_submissions: int
     feedback_mode: Any
+    improvement_wishes: bool = False
+    dying_message: bool = False
 
 
 class PlanningStrategy(ABC):

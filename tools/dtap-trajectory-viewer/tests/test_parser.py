@@ -148,6 +148,8 @@ def test_combines_policy_victim_and_config_diff(tmp_path: Path) -> None:
     assert "DTAP victim trajectory" in page
     assert "original/config.yaml" in page
     assert "submitted/config.yaml" in page
+    assert "data-copy-block" in page
+    assert "navigator.clipboard.writeText" in page
 
 
 def test_discovery_keeps_policy_and_victim_distinct(tmp_path: Path) -> None:

@@ -421,6 +421,18 @@ def test_explorer_displays_victim_agentic_harness():
     assert "OpenAI SDK" in javascript
 
 
+def test_explorer_has_per_component_copy_controls():
+    web = Path(__file__).resolve().parents[1] / "dtap_traj" / "web"
+    javascript = (web / "app.js").read_text()
+    css = (web / "app.css").read_text()
+
+    assert "data-copy-block" in javascript
+    assert "data-copy-content" in javascript
+    assert "navigator.clipboard.writeText" in javascript
+    assert "document.execCommand('copy')" in javascript
+    assert ".copy-button" in css
+
+
 def test_explorer_exposes_shareable_top_level_trajectory_and_performance_tabs():
     web = Path(__file__).resolve().parents[1] / "dtap_traj" / "web"
     javascript = (web / "app.js").read_text()

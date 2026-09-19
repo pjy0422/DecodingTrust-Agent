@@ -1,6 +1,6 @@
 {
   "artifact_contract": {
-    "latest_prompt_sha256": "8f134e9eb4fe83cb2e5911071031a4becce943120e7290a8eb1960bb0549d72e",
+    "latest_prompt_sha256": "7cd089d92fc75790afdb47380cf98d97cfc6258533965e34a177d67a1a5dd1a3",
     "schema": "dtap-agent-rl-episode",
     "schema_version": 1
   },
@@ -247,8 +247,8 @@
     "claude_launch_mode": "reusable harness / direct asyncio.create_subprocess_exec",
     "feedback_mode": "final+deterministic",
     "harness": "ClaudeCodeHarness",
-    "latest_holdout_prompt_bytes": 3366,
-    "latest_holdout_prompt_sha256": "8f134e9eb4fe83cb2e5911071031a4becce943120e7290a8eb1960bb0549d72e",
+    "latest_holdout_prompt_bytes": 4131,
+    "latest_holdout_prompt_sha256": "7cd089d92fc75790afdb47380cf98d97cfc6258533965e34a177d67a1a5dd1a3",
     "max_submissions": 2,
     "placement_enabled": true,
     "planning_strategy_default": "current",
