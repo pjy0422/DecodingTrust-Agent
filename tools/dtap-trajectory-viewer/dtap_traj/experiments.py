@@ -55,7 +55,9 @@ class ExperimentManager:
         self.artifact_root = artifact_root.resolve()
         self.config_dir = config_dir.resolve()
         self.runner_root = runner_root.resolve()
-        self.python = python.resolve()
+        # Preserve a virtualenv symlink: resolving it selects the base interpreter
+        # and silently drops the environment's installed dependencies.
+        self.python = Path(os.path.abspath(python.expanduser()))
         self.state_dir = state_dir.resolve()
         self.launch_token = launch_token
         self.jobs_dir = self.state_dir / "jobs"
@@ -185,15 +187,17 @@ class ExperimentManager:
             "--python",
             str(self.python),
         ]
-        process = subprocess.Popen(
-            command,
-            cwd=self.runner_root,
-            env=os.environ.copy(),
-            start_new_session=True,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        bootstrap_log = job_dir / "worker-bootstrap.log"
+        with bootstrap_log.open("ab", buffering=0) as bootstrap:
+            process = subprocess.Popen(
+                command,
+                cwd=self.runner_root,
+                env=os.environ.copy(),
+                start_new_session=True,
+                stdin=subprocess.DEVNULL,
+                stdout=bootstrap,
+                stderr=subprocess.STDOUT,
+            )
         current = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
         current["worker_pid"] = process.pid
         current["updated_at"] = _now()
@@ -216,13 +220,16 @@ class ExperimentManager:
         if not path.is_file():
             raise ExperimentLaunchError("experiment job not found")
         record = json.loads(path.read_text(encoding="utf-8"))
-        log_path = self.jobs_dir / job_id / "runner.log"
-        if log_path.is_file():
-            with log_path.open("rb") as stream:
-                stream.seek(max(0, log_path.stat().st_size - 64 * 1024))
-                record["log_tail"] = stream.read().decode("utf-8", errors="replace")
-        else:
-            record["log_tail"] = ""
+        chunks = []
+        for name in ("worker-bootstrap.log", "runner.log"):
+            log_path = self.jobs_dir / job_id / name
+            if log_path.is_file():
+                with log_path.open("rb") as stream:
+                    stream.seek(max(0, log_path.stat().st_size - 64 * 1024))
+                    content = stream.read().decode("utf-8", errors="replace")
+                if content:
+                    chunks.append(f"== {name} ==\n{content}")
+        record["log_tail"] = "\n".join(chunks)
         return record
 
 

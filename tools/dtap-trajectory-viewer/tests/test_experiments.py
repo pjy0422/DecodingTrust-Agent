@@ -84,6 +84,23 @@ def test_validate_overrides_untrusted_runtime_paths(manager: ExperimentManager):
     assert "config" not in result["resolved"]
 
 
+def test_python_virtualenv_symlink_is_preserved(tmp_path: Path):
+    interpreter = tmp_path / "venv/bin/python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.symlink_to("/usr/bin/python3")
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    selected = ExperimentManager(
+        artifact_root=tmp_path / "artifacts",
+        config_dir=configs,
+        runner_root=Path(__file__).parents[3],
+        python=interpreter,
+        state_dir=tmp_path / "state",
+        launch_token="secret",
+    )
+    assert selected.python == interpreter.absolute()
+
+
 def test_rejects_path_like_run_name_and_web_budget_overflow(manager: ExperimentManager):
     with pytest.raises(ExperimentLaunchError, match="run_name"):
         manager.validate(manager.template("baseline.yaml")["yaml"], "../escape")
