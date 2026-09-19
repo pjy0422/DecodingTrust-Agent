@@ -7,6 +7,7 @@ set -euo pipefail
 : "${DTAP_VIEWER_STATE_DIR:?set DTAP_VIEWER_STATE_DIR}"
 : "${DTAP_VIEWER_PYTHON:?set DTAP_VIEWER_PYTHON}"
 
+export PATH="$(dirname "${DTAP_VIEWER_PYTHON}"):${PATH}"
 if [[ -n "${DTAP_NODE_BIN_DIR:-}" ]]; then
   export PATH="${DTAP_NODE_BIN_DIR}:${PATH}"
 fi
