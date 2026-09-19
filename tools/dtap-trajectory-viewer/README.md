@@ -10,11 +10,13 @@ together.
 
 # DTAP Policy + Victim Trajectory Viewer
 
-The package now supports three workflows:
+The package now supports four workflows:
 
 1. `dtap-traj serve`: a local indexed explorer for many RL trajectories.
 2. Legacy single-file HTML export for sharing one self-contained trajectory.
 3. A manual Performance Preflight + Tuning Registry in the same explorer.
+4. An authenticated YAML experiment launcher that submits policy E2E matrices
+   and indexes their artifacts in the same screen.
 
 The explorer keeps the artifact directory as the source of truth. SQLite stores only searchable episode metadata and artifact paths, while the existing parser lazily loads policy/victim/config data for the selected episode.
 
@@ -56,8 +58,49 @@ The UI opens at `http://127.0.0.1:8765` by default and supports:
 - the trusted reward-firewall verdict kept separate from raw judge metadata,
 - original/submitted Config Diff,
 - server-side pagination,
-- live re-indexing with `--watch`.
+- live re-indexing with `--watch`; the browser also refreshes the active
+  trajectory/job view every 10 seconds, so newly completed E2E artifacts appear
+  without restarting the viewer,
 - persistent light/dark color themes from the top-bar toggle.
+
+## Authenticated E2E launcher
+
+The **Run E2E** tab loads strict `dtap.policy-eval/experiment-v1` templates,
+allows the YAML values to be edited, validates and normalizes the document, and
+starts the existing semantic domain-matrix runner. A submitted job writes into
+the viewer's artifact root, so `--watch` registers completed episodes
+automatically. Runner output and status are retained under the configured state
+directory.
+
+The launcher is disabled unless all four server arguments and a launch token
+are present:
+
+```bash
+export DTAP_VIEWER_LAUNCH_TOKEN="$(openssl rand -hex 32)"
+dtap-traj serve /path/to/artifacts --watch \
+  --experiment-config-dir /path/to/DecodingTrust-Agent/dt_arena/policy_eval/configs \
+  --experiment-runner-root /path/to/DecodingTrust-Agent \
+  --experiment-python /path/to/dtap/bin/python \
+  --experiment-state-dir ~/.local/state/dtap-trajectory-viewer/experiments
+```
+
+Enter that token in the Run E2E tab. The browser keeps it in `sessionStorage`,
+which is cleared when the tab session ends. The token, API keys, provider URLs,
+and arbitrary environment variables are never accepted in experiment YAML or
+written to artifacts. The server overwrites `paths.dtap_root`,
+`paths.artifacts_root`, and `paths.python`, constrains the output to the indexed
+artifact root, validates the closed schema, applies conservative web-launch
+budget caps, and asks for confirmation before consuming provider resources.
+Workers run in a separate process session and persist their status/config/log,
+so restarting the viewer does not discard an in-flight run.
+
+For a managed host, `scripts/serve-managed.sh` reads the launch token from a
+systemd credential, maps the server's provider environment into the policy,
+victim, and digestor processes, and starts the same CLI. The optional
+`scripts/update-managed-viewer.sh` is suitable for a user timer: it deploys
+only `origin/main`, refuses a dirty deployment worktree, and restarts the
+viewer only when the commit changes. Set the viewer unit's `KillMode=process`
+so a UI code restart does not terminate detached experiment workers.
 
 ## Performance preflight and tuning registry
 
@@ -145,8 +188,10 @@ judge implementations can intentionally share a predicate.
 The episode list reports the attack judge as **succeeded**, **failed**, or **not
 evaluated**. It does not infer containment from a missing/null verdict.
 
-The explorer has no authentication and is intended for local use. Keep the
-default loopback host when trajectories contain sensitive evaluation data.
+Trajectory reads remain unauthenticated and are intended for trusted/local use.
+Experiment mutation endpoints require the separate launch token. Keep the
+default loopback host when trajectories contain sensitive evaluation data, and
+protect persistent public tunnels with Cloudflare Access.
 
 ## Opening the explorer from a remote machine
 

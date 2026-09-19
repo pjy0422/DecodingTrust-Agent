@@ -1,4 +1,4 @@
-const MODES = new Set(['trajectories','performance']);
+const MODES = new Set(['trajectories','performance','experiments']);
 function modeFromLocation(){
   const requested=new URLSearchParams(window.location.search).get('view');
   return MODES.has(requested)?requested:'trajectories';
@@ -15,6 +15,10 @@ const state = {
     page: 0, limit: 100, loading: false,
     filters: {phase:'', status:'', hardware_fingerprint:'', model_fingerprint:'', workload_fingerprint:'', software_fingerprint:'', q:''},
   },
+  experiments: {
+    token: sessionStorage.getItem('dtap-launch-token')||'', templates: [], template: '',
+    yaml: '', runName: '', jobs: [], selectedJob: null, validation: null, message: '', loading: false,
+  },
 };
 const $ = (s, root=document) => root.querySelector(s);
 const esc = (v='') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
@@ -23,6 +27,42 @@ async function api(path, opts) {
   const r = await fetch(path, opts);
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
+}
+async function experimentApi(path,opts={}){
+  const token=state.experiments.token;
+  return api(path,{...opts,headers:{'Content-Type':'application/json','X-DTAP-Launch-Token':token,...(opts.headers||{})}});
+}
+async function loadExperimentWorkspace(){
+  const exp=state.experiments;exp.loading=true;exp.message='';render();
+  try{
+    const [templates,jobs]=await Promise.all([experimentApi('/api/experiments/templates'),experimentApi('/api/experiments/jobs')]);
+    exp.templates=templates.items||[];exp.jobs=jobs.items||[];
+    if(!exp.template&&exp.templates.length){exp.template=exp.templates[0].name;await loadExperimentTemplate(exp.template);}
+  }catch(error){exp.message=error.message;}finally{exp.loading=false;render();}
+}
+async function loadExperimentTemplate(name){
+  const exp=state.experiments;const data=await experimentApi(`/api/experiments/templates/${encodeURIComponent(name)}`);
+  exp.template=data.name;exp.yaml=data.yaml;exp.validation=null;
+  if(!exp.runName)exp.runName=`viewer-e2e-${new Date().toISOString().replace(/[:.]/g,'-')}`;
+}
+async function validateExperiment(){
+  const exp=state.experiments;exp.message='Validating…';render();
+  try{exp.validation=await experimentApi('/api/experiments/validate',{method:'POST',body:JSON.stringify({yaml:exp.yaml,run_name:exp.runName})});exp.yaml=exp.validation.normalized_yaml;exp.message='Configuration is valid. Server-managed paths were normalized.';}
+  catch(error){exp.validation=null;exp.message=error.message;}render();
+}
+async function launchExperiment(){
+  const exp=state.experiments;
+  if(!window.confirm(`Launch ${exp.runName}? This consumes provider/API resources.`))return;
+  exp.message='Submitting experiment…';render();
+  try{const job=await experimentApi('/api/experiments/launch',{method:'POST',body:JSON.stringify({yaml:exp.yaml,run_name:exp.runName})});exp.selectedJob=job.job_id;exp.message=`Submitted ${job.job_id}`;await refreshExperimentJobs();}
+  catch(error){exp.message=error.message;}render();
+}
+async function refreshExperimentJobs(){
+  const data=await experimentApi('/api/experiments/jobs');state.experiments.jobs=data.items||[];
+  if(state.experiments.selectedJob){
+    try{state.experiments.jobDetail=await experimentApi(`/api/experiments/jobs/${encodeURIComponent(state.experiments.selectedJob)}`);}catch(_){}
+  }
+  render();
 }
 function qsFilters() {
   const p = new URLSearchParams({limit: state.limit, offset: state.page * state.limit});
@@ -168,6 +208,7 @@ function setMode(value,{replace=false}={}){
   if(value==='performance'&&!state.tuning.facets){
     Promise.all([loadTuningFacets(),loadTuningTrials()]).catch(showFailure);
   }else if(value==='performance'&&state.tuning.selected){loadTuningDetail();}
+  else if(value==='experiments'&&state.experiments.token){loadExperimentWorkspace();}
   else if(value==='trajectories'&&state.selected){loadDetail();}
 }
 function episodeRow(ep){
@@ -343,10 +384,31 @@ function renderTuningDetail(){
   if(!detail){viewer.innerHTML='<div class="loading">Loading performance trial…</div>';return;}
   viewer.innerHTML=`${comparisonHtml(state.tuning.comparison)}<div class="tuning-grid">${experimentBrief(detail)}${breakdown(detail)}${jsonCard('Runtime config',detail.config)}${jsonCard('Measured metrics',detail.metrics)}${jsonCard('Profiles',detail.profiles)}${jsonCard('Artifact inventory',detail.artifacts)}${jsonCard('Fingerprints',{hardware:trial.hardware_fingerprint,model:trial.model_fingerprint,workload:trial.workload_fingerprint,software:trial.software_fingerprint,config:trial.config_digest})}</div>`;
 }
+function experimentWorkspace(){
+  const exp=state.experiments;
+  if(!exp.token)return `<main class="experiment-login"><section class="launcher-card login-card"><h1>Experiment launcher</h1><p>Enter the server-side launch token. It stays in this browser tab only and is never written into experiment YAML or artifacts.</p><label>Launch token<input id="launchToken" type="password" autocomplete="off"></label><button id="unlockLauncher" class="primary">Unlock launcher</button><p class="launcher-note">Trajectory viewing remains read-only without this token.</p></section></main>`;
+  const templateOptions=exp.templates.map(item=>`<option value="${esc(item.name)}" ${item.name===exp.template?'selected':''}>${esc(item.name)}</option>`).join('');
+  const jobs=exp.jobs.map(job=>`<button class="job-row ${job.job_id===exp.selectedJob?'active':''}" data-job="${esc(job.job_id)}"><span><b>${esc(job.run_name)}</b><small>${esc(job.job_id)}</small></span><i class="job-status ${esc(job.status)}">${esc(job.status)}</i></button>`).join('')||'<div class="empty compact">No viewer-submitted jobs yet.</div>';
+  const detail=exp.jobDetail;
+  return `<main class="experiment-workspace"><section class="launcher-card editor-card"><div class="launcher-title"><div><h1>Run policy evaluation</h1><p>Edit a strict experiment-v1 YAML. Credentials and runtime paths stay server-managed.</p></div><button id="lockLauncher">Lock</button></div><div class="launcher-fields"><label>Template<select id="experimentTemplate">${templateOptions}</select></label><label>Run name<input id="experimentRunName" value="${esc(exp.runName)}" maxlength="80"></label></div><label>config.yaml<textarea id="experimentYaml" spellcheck="false">${esc(exp.yaml)}</textarea></label><div class="launcher-actions"><button id="validateExperiment">Validate + normalize</button><button id="launchExperiment" class="primary">Run E2E</button></div><div class="launcher-message">${esc(exp.message||'Changes are not submitted until Run E2E is confirmed.')}</div>${exp.validation?`<details><summary>Resolved configuration</summary><pre>${esc(JSON.stringify(exp.validation.resolved,null,2))}</pre></details>`:''}</section><section class="launcher-card jobs-card"><div class="launcher-title"><div><h2>Experiment jobs</h2><p>Jobs survive viewer restarts; completed artifacts appear automatically in Trajectories.</p></div><button id="refreshJobs">Refresh</button></div><div class="job-list">${jobs}</div>${detail?`<div class="job-detail"><h3>${esc(detail.run_name)} · ${esc(detail.status)}</h3><p>${esc(detail.artifact_path)}</p><pre>${esc(detail.log_tail||'Waiting for runner output…')}</pre></div>`:''}</section></main>`;
+}
 function bind(){
   document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>{
     setMode(button.dataset.mode);
   }));
+  if(state.mode==='experiments'){
+    $('#unlockLauncher')?.addEventListener('click',()=>{const token=$('#launchToken').value.trim();state.experiments.token=token;sessionStorage.setItem('dtap-launch-token',token);loadExperimentWorkspace();});
+    $('#lockLauncher')?.addEventListener('click',()=>{state.experiments.token='';sessionStorage.removeItem('dtap-launch-token');render();});
+    $('#experimentTemplate')?.addEventListener('change',async event=>{await loadExperimentTemplate(event.target.value);render();});
+    $('#experimentRunName')?.addEventListener('input',event=>{state.experiments.runName=event.target.value;});
+    $('#experimentYaml')?.addEventListener('input',event=>{state.experiments.yaml=event.target.value;state.experiments.validation=null;});
+    $('#validateExperiment')?.addEventListener('click',validateExperiment);
+    $('#launchExperiment')?.addEventListener('click',launchExperiment);
+    $('#refreshJobs')?.addEventListener('click',refreshExperimentJobs);
+    document.querySelectorAll('[data-job]').forEach(button=>button.addEventListener('click',async()=>{state.experiments.selectedJob=button.dataset.job;state.experiments.jobDetail=await experimentApi(`/api/experiments/jobs/${encodeURIComponent(button.dataset.job)}`);render();}));
+    $('#themeToggle')?.addEventListener('click',()=>setTheme(theme()==='light'?'dark':'light'));
+    return;
+  }
   if(state.mode==='performance'){
     document.querySelectorAll('[data-tuning-filter]').forEach(select=>select.addEventListener('change',event=>{
       state.tuning.filters[event.target.dataset.tuningFilter]=event.target.value;state.tuning.page=0;loadTuningTrials();
@@ -390,12 +452,12 @@ function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>f
 function render(){
   const f=state.facets||{};
   const light=theme()==='light';
-  const performance=state.mode==='performance';const tf=state.tuning.facets||{};
+  const performance=state.mode==='performance';const experiments=state.mode==='experiments';const tf=state.tuning.facets||{};
   const searchValue=performance?state.tuning.filters.q:state.filters.q;
-  const stats=performance?`<span><b>${tf.total??0}</b> trials</span><span><b>${tf.successful??0}</b> measured</span>`:`<span><b>${f.total??0}</b> episodes</span><span><b>${f.domains?.length??0}</b> domains</span><span><b>${f.attack_successes??0}</b> attacks</span>`;
-  const workspace=performance?`${tuningSidebar()}${tuningListPane()}${tuningDetailShell()}`:`${sidebar()}${listPane()}${detailShell()}`;
-  $('#app').innerHTML=`<div class="shell"><header class="topbar"><div class="brand"><div class="logo"></div><div><strong>DTAP Explorer</strong><small>experiment observability</small></div></div><nav class="mode-switch" role="tablist" aria-label="Explorer workspace"><button type="button" role="tab" aria-selected="${!performance}" data-mode="trajectories" class="${performance?'':'active'}">Trajectories</button><button type="button" role="tab" aria-selected="${performance}" data-mode="performance" class="${performance?'active':''}">Performance</button></nav><div class="search"><input id="globalSearch" placeholder="${performance?'Search trial, hardware, model, hypothesis…':'Search task, episode, model, risk category…'}" value="${esc(searchValue)}"></div><div class="statline">${stats}</div><button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to ${light?'dark':'light'} theme" aria-pressed="${light}">${light?'☾ Dark':'☀ Light'}</button></header><div class="workspace ${performance?'performance-workspace':''}">${workspace}</div></div>`;
-  bind(); if(performance)renderTuningDetail();else renderDetail();
+  const stats=experiments?`<span><b>${state.experiments.jobs.length}</b> launched jobs</span>`:performance?`<span><b>${tf.total??0}</b> trials</span><span><b>${tf.successful??0}</b> measured</span>`:`<span><b>${f.total??0}</b> episodes</span><span><b>${f.domains?.length??0}</b> domains</span><span><b>${f.attack_successes??0}</b> attacks</span>`;
+  const workspace=experiments?experimentWorkspace():performance?`${tuningSidebar()}${tuningListPane()}${tuningDetailShell()}`:`${sidebar()}${listPane()}${detailShell()}`;
+  $('#app').innerHTML=`<div class="shell"><header class="topbar"><div class="brand"><div class="logo"></div><div><strong>DTAP Explorer</strong><small>experiment observability</small></div></div><nav class="mode-switch" role="tablist" aria-label="Explorer workspace"><button type="button" role="tab" aria-selected="${state.mode==='trajectories'}" data-mode="trajectories" class="${state.mode==='trajectories'?'active':''}">Trajectories</button><button type="button" role="tab" aria-selected="${performance}" data-mode="performance" class="${performance?'active':''}">Performance</button><button type="button" role="tab" aria-selected="${experiments}" data-mode="experiments" class="${experiments?'active':''}">Run E2E</button></nav>${experiments?'':`<div class="search"><input id="globalSearch" placeholder="${performance?'Search trial, hardware, model, hypothesis…':'Search task, episode, model, risk category…'}" value="${esc(searchValue)}"></div>`}<div class="statline">${stats}</div><button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to ${light?'dark':'light'} theme" aria-pressed="${light}">${light?'☾ Dark':'☀ Light'}</button></header><div class="workspace ${performance?'performance-workspace':''} ${experiments?'experiment-shell':''}">${workspace}</div></div>`;
+  bind(); if(performance)renderTuningDetail();else if(!experiments)renderDetail();
 }
 function showFailure(err){console.error(err);$('#app').innerHTML=`<div class="empty"><div><strong>Explorer failed to load</strong>${esc(err.message)}</div></div>`;}
 async function writeClipboard(text){
@@ -426,4 +488,15 @@ window.addEventListener('popstate',()=>{
   await loadFacets();
   await loadEpisodes();
   if(state.mode==='performance')await Promise.all([loadTuningFacets(),loadTuningTrials()]);
+  if(state.mode==='experiments'&&state.experiments.token)await loadExperimentWorkspace();
 })().catch(showFailure);
+window.setInterval(async()=>{
+  try{
+    if(state.mode==='experiments'&&state.experiments.token&&!document.activeElement?.matches('#experimentYaml,#experimentRunName'))await refreshExperimentJobs();
+    if(state.mode==='trajectories'){
+      const selectedKey=state.selected?`${state.selected.episode_id}@${state.attempt??'latest'}`:null;
+      if(selectedKey)state.cache.delete(selectedKey);
+      await loadFacets();await loadEpisodes();
+    }
+  }catch(error){console.warn('background refresh failed',error);}
+},10000);
