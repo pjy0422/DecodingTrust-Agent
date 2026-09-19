@@ -3,6 +3,8 @@ import json
 import pytest
 
 from agent.openclaw.src.mcp_proxy import FeedbackObserver, MCPEventSink, MCPProxyServer
+from agent.openclaw.src.agent import OpenClawAgent
+from agent.openclaw.src.plugin_generator import StaticPluginGenerator
 
 
 class _Hook:
@@ -237,3 +239,63 @@ def test_static_feedback_is_unknown_without_provider_boundary(tmp_path):
     event = json.loads(path.read_text(encoding="utf-8"))
     assert event["presented_to_model"] is None
     assert event["unknown_reasons"] == ["message_boundary_unavailable"]
+
+
+def test_provider_input_observation_is_raw_free_and_authoritative(tmp_path):
+    path = tmp_path / "provider-feedback.jsonl"
+    sink = MCPEventSink(path, "episode-provider")
+    observer = FeedbackObserver(sink)
+    observer.register({
+        "step_index": 0,
+        "injection_type": "environment",
+        "supported": True,
+        "payload_values": ["private payload"],
+    })
+    observer.observe_provider_input({
+        "schema_version": 1,
+        "type": "provider.input.observed",
+        "step_index": 0,
+        "boundary_observed": True,
+        "presented": True,
+    })
+    observer.emit()
+    raw = path.read_text(encoding="utf-8")
+    assert "private payload" not in raw
+    event = json.loads(raw)
+    assert event["presented_to_model"] is True
+    assert event["presentation_observation_source"] == "provider_request"
+    assert "message_boundary_unavailable" not in event["unknown_reasons"]
+
+
+def test_generated_plugin_observes_llm_input_without_retaining_payload(tmp_path):
+    generator = StaticPluginGenerator(extensions_dir=str(tmp_path / "extensions"))
+    output = tmp_path / "index.ts"
+    generator._write_index_ts(
+        str(tmp_path),
+        [],
+        feedback_probe_path=str(tmp_path / "private-probes.json"),
+        provider_observation_path=str(tmp_path / "observations.jsonl"),
+    )
+    source = output.read_text(encoding="utf-8")
+    assert 'api.on("llm_input"' in source
+    assert 'type: "provider.input.observed"' in source
+    assert "payload_values" in source
+    assert "presented:" in source
+    assert 'target.replace(":", "_")' in source
+    assert 'message?.role === "toolResult"' in source
+
+
+@pytest.mark.asyncio
+async def test_openclaw_cleanup_removes_ephemeral_raw_probe_registry(tmp_path):
+    probe = tmp_path / "feedback-probes.json"
+    probe.write_text('[{"payload_values":["private"]}]', encoding="utf-8")
+    agent = OpenClawAgent.__new__(OpenClawAgent)
+    agent._feedback_probe_file = str(probe)
+    agent._proxy_manager = None
+    agent._profile_dir = str(tmp_path / "missing-profile")
+    agent.reset_conversation = lambda: None
+    agent._cleanup_temp_resources = lambda: None
+
+    await OpenClawAgent.cleanup(agent)
+
+    assert not probe.exists()

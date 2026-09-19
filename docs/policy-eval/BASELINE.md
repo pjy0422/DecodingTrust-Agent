@@ -7,7 +7,7 @@ Source provenance:
 - canonical source baseline expected by the migrator: `f1e8ee90fe725d394b4e9929947423ecaa01976c`
 - canonical DTAP base expected by the migrator: `e0323a521ba4ef88f8e14c1eccf68d0a3d19a458`
 - retained latest E2E artifact: `p3-holdout-live-20260909`
-- current prompt SHA-256: `7cd089d92fc75790afdb47380cf98d97cfc6258533965e34a177d67a1a5dd1a3`
+- current prompt SHA-256: `dc16aa85357bd0ec550e08c968fdec1fd721a2eb096e811da614a0a65436f59c`
 
 Current execution behavior is versioned and regression-tested:
 

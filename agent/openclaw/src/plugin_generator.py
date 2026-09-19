@@ -2,7 +2,6 @@ import os
 import json
 import shutil
 import tempfile
-import subprocess
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 
@@ -45,6 +44,9 @@ class StaticPluginGenerator:
         self,
         servers: List[MCPServerTools],
         plugin_id: str,
+        *,
+        feedback_probe_path: Optional[str] = None,
+        provider_observation_path: Optional[str] = None,
     ) -> str:
         """
         Generate a static OpenClaw plugin for the given MCP servers.
@@ -63,7 +65,12 @@ class StaticPluginGenerator:
             # Generate plugin files
             self._write_package_json(plugin_dir, plugin_id)
             self._write_manifest(plugin_dir, plugin_id, servers)
-            self._write_index_ts(plugin_dir, servers)
+            self._write_index_ts(
+                plugin_dir,
+                servers,
+                feedback_probe_path=feedback_probe_path,
+                provider_observation_path=provider_observation_path,
+            )
 
             # Install the plugin
             installed_path = self._install_plugin(plugin_dir, plugin_id)
@@ -116,7 +123,14 @@ class StaticPluginGenerator:
         with open(os.path.join(plugin_dir, "openclaw.plugin.json"), "w") as f:
             json.dump(manifest, f, indent=2)
 
-    def _write_index_ts(self, plugin_dir: str, servers: List[MCPServerTools]) -> None:
+    def _write_index_ts(
+        self,
+        plugin_dir: str,
+        servers: List[MCPServerTools],
+        *,
+        feedback_probe_path: Optional[str] = None,
+        provider_observation_path: Optional[str] = None,
+    ) -> None:
         """Write the main plugin TypeScript file."""
 
         # Generate tool registration code for each server
@@ -182,12 +196,59 @@ class StaticPluginGenerator:
 
         # Combine into full plugin code (minimal logging to verify loading)
         total_tools = sum(len(s.tools) for s in servers)
+        provider_hook = ""
+        if feedback_probe_path and provider_observation_path:
+            probe_path_json = json.dumps(feedback_probe_path)
+            observation_path_json = json.dumps(provider_observation_path)
+            provider_hook = f'''
+  // Measure payload presentation at OpenClaw's actual provider-input boundary.
+  // The probe registry is attempt-private and ephemeral; the retained output
+  // contains booleans and step ids only, never payload text.
+  api.on("llm_input", async (event: any) => {{
+    try {{
+      const {{ readFileSync, appendFileSync }} = await import("node:fs");
+      const probes = JSON.parse(readFileSync({probe_path_json}, "utf8"));
+      const containsAll = (candidate: any, values: any[]) => {{
+        const serialized = typeof candidate === "string" ? candidate : JSON.stringify(candidate ?? null);
+        return values.every((value: any) => typeof value === "string" && serialized.includes(value));
+      }};
+      for (const probe of Array.isArray(probes) ? probes : []) {{
+        let candidate: any = null;
+        if (probe.presentation_source === "submitted_prompt") candidate = event.prompt;
+        else if (probe.presentation_source === "system_prompt") candidate = event.systemPrompt;
+        else if (probe.presentation_source === "available_tools") {{
+          const target = String(probe.target_tool ?? "");
+          const generatedName = target.replace(":", "_");
+          candidate = (Array.isArray(event.tools) ? event.tools : []).find((tool: any) => {{
+            const name = String(tool?.name ?? tool?.tool ?? tool?.id ?? "");
+            return name === target || name === target.split(":").pop() || name === generatedName ||
+              name.endsWith("__" + target.replace(":", "__"));
+          }});
+        }} else if (probe.presentation_source === "tool_result") {{
+          candidate = (Array.isArray(event.historyMessages) ? event.historyMessages : [])
+            .filter((message: any) => message?.role === "toolResult");
+        }}
+        const record = {{
+          schema_version: 1,
+          type: "provider.input.observed",
+          run_id: event.runId ?? null,
+          step_index: probe.step_index,
+          boundary_observed: true,
+          presented: candidate !== null && containsAll(candidate, probe.payload_values ?? []),
+        }};
+        appendFileSync({observation_path_json}, JSON.stringify(record) + "\\n", {{ encoding: "utf8", mode: 0o600 }});
+      }}
+    }} catch (_) {{ /* absence is reported as an unavailable boundary */ }}
+  }});
+'''
+
         plugin_code = f'''// Auto-generated static MCP tools plugin
 // Generated for servers: {", ".join(s.name for s in servers)}
 
 export default function (api: any) {{
   console.log("[OpenClaw-MCP] Loading {total_tools} tools...");
 {"".join(tool_registrations)}
+{provider_hook}
   console.log("[OpenClaw-MCP] Done.");
 }}
 '''

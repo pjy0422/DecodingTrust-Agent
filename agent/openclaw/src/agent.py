@@ -137,6 +137,12 @@ class OpenClawAgent(Agent):
         self._mcp_event_log: str = os.path.join(
             self._runtime_trace_dir, f"{self._session_id}.mcp-events.jsonl"
         )
+        self._feedback_probe_file = os.path.join(
+            self._runtime_trace_dir, f"{self._session_id}.feedback-probes.json"
+        )
+        self._provider_observation_file = os.path.join(
+            self._runtime_trace_dir, f"{self._session_id}.provider-feedback.jsonl"
+        )
         self._conversation_history: List[Dict[str, Any]] = []
 
         # Unique profile name for isolation (prevents plugin conflicts in parallel execution)
@@ -435,7 +441,8 @@ class OpenClawAgent(Agent):
         # Enable the generated static plugin if we have one
         if self._generated_plugin_id:
             openclaw_config["plugins"]["entries"][self._generated_plugin_id] = {
-                "enabled": True
+                "enabled": True,
+                "hooks": {"allowConversationAccess": True},
             }
 
             # Add to plugins.allow list (required for plugin to load)
@@ -592,8 +599,10 @@ class OpenClawAgent(Agent):
                     print(f"[OpenClaw] Warning: Failed to discover tools from {server_name}: {e}")
 
         if not servers:
-            print("[OpenClaw] Warning: No tools discovered from any server")
-            return
+            # The generated plugin also owns the provider-input observation
+            # hook, so prompt/skill presentation remains measurable even when
+            # this victim exposes no MCP tools.
+            print("[OpenClaw] No MCP tools discovered; generating observation-only plugin")
 
         # Generate unique plugin ID for this task
         self._generated_plugin_id = f"mcp-tools-{uuid.uuid4().hex[:8]}"
@@ -609,7 +618,9 @@ class OpenClawAgent(Agent):
         try:
             self._plugin_generator.generate_plugin(
                 servers=servers,
-                plugin_id=self._generated_plugin_id
+                plugin_id=self._generated_plugin_id,
+                feedback_probe_path=self._feedback_probe_file,
+                provider_observation_path=self._provider_observation_file,
             )
 
             total_tools = sum(len(s.tools) for s in servers)
@@ -1103,6 +1114,7 @@ class OpenClawAgent(Agent):
             self._proxy_manager.register_feedback_probe(
                 build_environment_feedback_probe(injection, result)
             )
+        self._proxy_manager.write_provider_probe_registry(self._feedback_probe_file)
 
     def register_attack_feedback(self, attack_config: Any) -> None:
         """Register non-environment attack probes after the proxy exists."""
@@ -1110,32 +1122,39 @@ class OpenClawAgent(Agent):
             return
         for probe in build_static_feedback_probes(attack_config):
             self._proxy_manager.register_feedback_probe(probe)
+        self._proxy_manager.write_provider_probe_registry(self._feedback_probe_file)
 
     def _observe_feedback_messages(self, session_path: str) -> None:
         if self._proxy_manager is None:
             return
         try:
             path = Path(session_path)
-            if path.stat().st_size > 32 * 1024 * 1024:
-                return
-            for line in path.read_text(encoding="utf-8").splitlines():
-                value = json.loads(line)
-                self._proxy_manager.observe_runtime_event(value)
+            if path.stat().st_size <= 32 * 1024 * 1024:
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    value = json.loads(line)
+                    self._proxy_manager.observe_runtime_event(value)
 
-                def visit(item: Any) -> None:
-                    if isinstance(item, dict):
-                        snapshot = item.get("messagesSnapshot")
-                        if isinstance(snapshot, list):
-                            self._proxy_manager.observe_messages_snapshot(snapshot)
-                        for child in item.values():
-                            visit(child)
-                    elif isinstance(item, list):
-                        for child in item:
-                            visit(child)
+                    def visit(item: Any) -> None:
+                        if isinstance(item, dict):
+                            snapshot = item.get("messagesSnapshot")
+                            if isinstance(snapshot, list):
+                                self._proxy_manager.observe_messages_snapshot(snapshot)
+                            for child in item.values():
+                                visit(child)
+                        elif isinstance(item, list):
+                            for child in item:
+                                visit(child)
 
-                visit(value)
+                    visit(value)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            return
+            pass
+        try:
+            provider_path = Path(self._provider_observation_file)
+            if provider_path.is_file() and provider_path.stat().st_size <= 4 * 1024 * 1024:
+                for line in provider_path.read_text(encoding="utf-8").splitlines():
+                    self._proxy_manager.observe_provider_input(json.loads(line))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            pass
 
     async def _generate_trajectory(
         self,
@@ -1269,6 +1288,12 @@ class OpenClawAgent(Agent):
         self._mcp_event_log = os.path.join(
             self._runtime_trace_dir, f"{self._session_id}.mcp-events.jsonl"
         )
+        self._feedback_probe_file = os.path.join(
+            self._runtime_trace_dir, f"{self._session_id}.feedback-probes.json"
+        )
+        self._provider_observation_file = os.path.join(
+            self._runtime_trace_dir, f"{self._session_id}.provider-feedback.jsonl"
+        )
         self._trace_metadata = None
         self._current_trajectory = None
         self._last_cli_payload = None
@@ -1279,6 +1304,7 @@ class OpenClawAgent(Agent):
 
     async def cleanup(self) -> None:
         """Clean up resources: stop proxies, restore config."""
+        probe_path = Path(self._feedback_probe_file)
         self.reset_conversation()
 
         # Stop all proxy servers
@@ -1286,6 +1312,13 @@ class OpenClawAgent(Agent):
             await self._proxy_manager.stop_all()
             self._proxy_manager = None
             self._proxy_urls = {}
+
+        # The provider hook needs raw values transiently for exact matching,
+        # but only its raw-free boolean observations may survive the run.
+        try:
+            probe_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
         # Clean up temp resources outside profile dir
         self._cleanup_temp_resources()

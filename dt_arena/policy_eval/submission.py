@@ -349,8 +349,6 @@ class SubmissionCoordinator:
             if (
                 self.feedback_builder is not None
                 and result.attack_success is False
-                and not self.runtime.terminal
-                and self.runtime.remaining_submissions > 0
             ):
                 try:
                     feedback = await self.feedback_builder.build(

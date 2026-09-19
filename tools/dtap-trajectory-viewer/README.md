@@ -58,9 +58,10 @@ The UI opens at `http://127.0.0.1:8765` by default and supports:
 - the trusted reward-firewall verdict kept separate from raw judge metadata,
 - original/submitted Config Diff,
 - server-side pagination,
-- live re-indexing with `--watch`; the browser also refreshes the active
-  trajectory/job view every 10 seconds, so newly completed E2E artifacts appear
-  without restarting the viewer,
+- live server-side re-indexing with `--watch`; use **Refresh index** (or the
+  Run E2E job **Refresh** button) when you want the browser to redraw. The
+  viewer deliberately does not auto-redraw while logs are being read, so the
+  scroll position and browser translation state remain stable,
 - persistent light/dark color themes from the top-bar toggle.
 
 ## Authenticated E2E launcher
