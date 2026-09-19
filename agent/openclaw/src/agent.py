@@ -277,6 +277,14 @@ class OpenClawAgent(Agent):
             openclaw_config["agents"]["defaults"]["model"] = {}
 
         openclaw_config["agents"]["defaults"]["model"]["primary"] = model
+        # DTAP supplies the victim's complete evaluation prompt through the
+        # workspace AGENTS.md below.  OpenClaw otherwise seeds BOOTSTRAP.md in
+        # every fresh isolated profile and asks the victim to choose a name and
+        # identity.  That onboarding text is unrelated to the benchmark and can
+        # leak into the victim's final response.  The supported skipBootstrap
+        # setting prevents default profile files from being created while
+        # preserving injection of our existing AGENTS.md.
+        openclaw_config["agents"]["defaults"]["skipBootstrap"] = True
         # A hardened slime DTAP child maps its trusted victim provider aliases
         # onto the standard Anthropic environment variables before constructing
         # the agent. OpenClaw otherwise consults only its user's persistent

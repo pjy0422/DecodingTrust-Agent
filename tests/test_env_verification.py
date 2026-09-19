@@ -27,6 +27,7 @@ from dt_arena.src.env_verification import (
     verify_started_routes,
 )
 from dt_arena.src import env_verification
+from dt_arena.src.placement_contract import placement_failure_result
 from utils.injection_helpers import _classify_injection_result
 
 
@@ -962,6 +963,55 @@ class PlacementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.code, "INJECTION_FAILED")
         self.assertEqual(raised.exception.locator, "os-filesystem:/home/alice/a")
         self.assertEqual(raised.exception.locator_fields, ("kwargs.file_path",))
+        self.assertEqual(raised.exception.repair_fields, ())
+        self.assertFalse(raised.exception.retryable)
+
+    async def test_authenticated_injection_conflict_is_retryable(self):
+        injection = {
+            "server_name": "travel-injection", "tool_name": "inject_accommodation",
+            "kwargs": {"name": "Existing", "city": "Boston"}, "turn_id": 1,
+        }
+        result = {
+            **injection, "success": False,
+            "placement_failure": {
+                "code": "RESOURCE_CONFLICT", "repair_fields": ["name"],
+            },
+        }
+        with self.assertRaises(PlacementValidationError) as raised:
+            await verify_placement_batch([injection], [result], {}, Docker([]))
+        self.assertEqual(raised.exception.code, "INJECTION_FAILED")
+        self.assertEqual(raised.exception.repair_fields, ("kwargs.name",))
+        self.assertTrue(raised.exception.retryable)
+
+    async def test_raw_backend_failure_metadata_is_not_a_repair_oracle(self):
+        injection = {
+            "server_name": "travel-injection", "tool_name": "inject_accommodation",
+            "kwargs": {"name": "Existing", "city": "Boston"}, "turn_id": 1,
+        }
+        backend = placement_failure_result(
+            {"status": "error", "result": "backend-authored metadata"},
+            code="RESOURCE_CONFLICT", repair_fields=("name",),
+        )
+        result = {**injection, "success": False, "result": json.dumps(backend)}
+        with self.assertRaises(PlacementValidationError) as raised:
+            await verify_placement_batch([injection], [result], {}, Docker([]))
+        self.assertEqual(raised.exception.repair_fields, ())
+        self.assertFalse(raised.exception.retryable)
+
+    async def test_repair_field_must_exist_in_submitted_kwargs(self):
+        injection = {
+            "server_name": "travel-injection", "tool_name": "inject_accommodation",
+            "kwargs": {"name": "Existing", "city": "Boston"}, "turn_id": 1,
+        }
+        result = {
+            **injection, "success": False,
+            "placement_failure": {
+                "code": "RESOURCE_CONFLICT",
+                "repair_fields": ["provider_internal_id"],
+            },
+        }
+        with self.assertRaises(PlacementValidationError) as raised:
+            await verify_placement_batch([injection], [result], {}, Docker([]))
         self.assertEqual(raised.exception.repair_fields, ())
         self.assertFalse(raised.exception.retryable)
 

@@ -4,7 +4,10 @@ from typing import Literal
 import requests
 from fastmcp import FastMCP
 
-from dt_arena.src.placement_contract import placement_resource_metadata
+from dt_arena.src.placement_contract import (
+    placement_failure_result,
+    placement_resource_metadata,
+)
 
 timeout = 30
 TRAVEL_HOST = os.getenv("TRAVEL_HOST", "localhost")
@@ -16,13 +19,30 @@ TRAVEL_ENV_INJECTION_MCP_PORT = os.getenv("TRAVEL_ENV_INJECTION_MCP_PORT", 10305
 mcp = FastMCP(name="TravelEnvInjection")
 
 _REVIEWABLE_PROVIDER = placement_resource_metadata(
-    kind="travel.reviewable_entity", role="provider"
+    kind="travel.reviewable_entity", role="provider",
+    failure_repairs={"RESOURCE_CONFLICT": ("name",)},
 )
 _REVIEWABLE_CONSUMER = placement_resource_metadata(
     kind="travel.reviewable_entity", role="consumer"
 )
 
-def send_post_request(endpoint: str, data: dict) -> dict:
+def _annotate_resource_conflict(response: dict, repair_fields: tuple[str, ...]) -> dict:
+    """Translate the Travel provider's known uniqueness error at its edge."""
+    message = response.get("result") or response.get("message") or response.get("error")
+    if (
+        str(response.get("status", "")).lower() in {"error", "failed"}
+        and isinstance(message, str)
+        and "already exists" in message.casefold()
+    ):
+        return placement_failure_result(
+            response, code="RESOURCE_CONFLICT", repair_fields=repair_fields,
+        )
+    return response
+
+
+def send_post_request(
+    endpoint: str, data: dict, *, conflict_repair_fields: tuple[str, ...] = (),
+) -> dict:
     """Send POST request to the travel server.
 
     Args:
@@ -34,7 +54,10 @@ def send_post_request(endpoint: str, data: dict) -> dict:
     """
     url = f"http://{TRAVEL_HOST}:{TRAVEL_PORT}/{endpoint}"
     resp = requests.post(url, json=data, timeout=timeout)
-    return resp.json()
+    response = resp.json()
+    if conflict_repair_fields and isinstance(response, dict):
+        return _annotate_resource_conflict(response, conflict_repair_fields)
+    return response
 
 @mcp.tool(name="inject_flight")
 def inject_flight(
@@ -113,7 +136,10 @@ def inject_accommodation(
         "review rate number": review_rate_number,
         "city": city
     }
-    return send_post_request("add_accommodation", accommodation_data)
+    return send_post_request(
+        "add_accommodation", accommodation_data,
+        conflict_repair_fields=("name",),
+    )
 
 @mcp.tool(name="inject_restaurant", meta=_REVIEWABLE_PROVIDER)
 def inject_restaurant(
@@ -142,7 +168,10 @@ def inject_restaurant(
         "Aggregate Rating": aggregate_rating,
         "City": city
     }
-    return send_post_request("add_restaurant", restaurant_data)
+    return send_post_request(
+        "add_restaurant", restaurant_data,
+        conflict_repair_fields=("name",),
+    )
 
 @mcp.tool(name="inject_review", meta=_REVIEWABLE_CONSUMER)
 def inject_review(
