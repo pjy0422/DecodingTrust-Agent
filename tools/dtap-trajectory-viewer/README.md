@@ -101,6 +101,9 @@ victim, and digestor processes, and starts the same CLI. The optional
 only `origin/main`, refuses a dirty deployment worktree, and restarts the
 viewer only when the commit changes. Set the viewer unit's `KillMode=process`
 so a UI code restart does not terminate detached experiment workers.
+When Claude/OpenClaw CLIs are installed under a version manager rather than the
+system PATH, set `DTAP_NODE_BIN_DIR` in the service (for example, the active
+NVM version's `bin` directory); detached workers inherit that trusted path.
 
 ## Performance preflight and tuning registry
 
