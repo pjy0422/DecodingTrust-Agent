@@ -250,6 +250,7 @@ async def _main(args) -> None:
     harness = ClaudeCodeHarness(claude)
 
     snapshot = load_task_snapshot(args.task_dir)
+    artifacts_dir = args.artifacts_dir.expanduser().resolve() if args.artifacts_dir else None
     feedback_mode = FeedbackMode(args.feedback_mode)
     planning_context = PlanningContext(
         placement_enabled=args.placement_enabled,
@@ -301,8 +302,8 @@ async def _main(args) -> None:
                 digest_timeout_seconds=2 * args.digestor_timeout
                 + 1.0,
             ),
+            research_output_root=artifacts_dir,
         )
-    artifacts_dir = args.artifacts_dir.expanduser().resolve() if args.artifacts_dir else None
     if artifacts_dir is not None:
         artifacts_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(snapshot.task_dir / "config.yaml", artifacts_dir / "original-config.yaml")

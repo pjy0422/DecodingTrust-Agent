@@ -223,7 +223,7 @@ function episodeRow(ep){
 }
 function listPane(){
   const start=state.total? state.page*state.limit+1:0, end=Math.min((state.page+1)*state.limit,state.total);
-  return `<section class="listpane"><div class="listhead"><div class="listhead-row"><h2>Episodes</h2><span>${start}–${end} / ${state.total}</span></div></div>
+  return `<section class="listpane"><div class="listhead"><div class="listhead-row"><h2>Episodes</h2><span>${start}–${end} / ${state.total}</span></div><button id="refreshEpisodes" class="compare-button">Refresh index</button></div>
     <div class="episodes">${state.loading?'<div class="loading">Index query…</div>':state.episodes.map(episodeRow).join('')}</div>
     <div class="pager"><button id="prev" ${state.page===0?'disabled':''}>← Previous</button><button id="next" ${end>=state.total?'disabled':''}>Next →</button></div></section>`;
 }
@@ -443,6 +443,11 @@ function bind(){
   document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>{state.tab=b.dataset.tab; document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b)); renderDetail();}));
   $('#prev')?.addEventListener('click',()=>{if(state.page>0){state.page--;loadEpisodes();}});
   $('#next')?.addEventListener('click',()=>{if((state.page+1)*state.limit<state.total){state.page++;loadEpisodes();}});
+  $('#refreshEpisodes')?.addEventListener('click',async()=>{
+    state.cache.clear();
+    await loadFacets();
+    await loadEpisodes();
+  });
   $('#resetFilters')?.addEventListener('click',()=>{state.filters={run_name:'',domain:'',threat_model:'',status:'',attack_success:'',attack_evaluated:'',q:''};state.page=0;$('#globalSearch').value='';loadEpisodes();});
   $('#globalSearch')?.addEventListener('input',debounce(e=>{state.filters.q=e.target.value.trim();state.page=0;loadEpisodes();},250));
   $('#themeToggle')?.addEventListener('click',()=>setTheme(theme()==='light'?'dark':'light'));
@@ -490,13 +495,3 @@ window.addEventListener('popstate',()=>{
   if(state.mode==='performance')await Promise.all([loadTuningFacets(),loadTuningTrials()]);
   if(state.mode==='experiments'&&state.experiments.token)await loadExperimentWorkspace();
 })().catch(showFailure);
-window.setInterval(async()=>{
-  try{
-    if(state.mode==='experiments'&&state.experiments.token&&!document.activeElement?.matches('#experimentYaml,#experimentRunName'))await refreshExperimentJobs();
-    if(state.mode==='trajectories'){
-      const selectedKey=state.selected?`${state.selected.episode_id}@${state.attempt??'latest'}`:null;
-      if(selectedKey)state.cache.delete(selectedKey);
-      await loadFacets();await loadEpisodes();
-    }
-  }catch(error){console.warn('background refresh failed',error);}
-},10000);

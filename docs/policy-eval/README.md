@@ -19,7 +19,7 @@ Claude Code policy
        -> bounded submit transaction
           -> fresh DTAP victim subprocess
           -> judge
-          -> bounded feedback on non-terminal miss
+          -> bounded feedback on every failed H, including terminal H
     -> artifact v1 bundle
     -> tools/dtap-trajectory-viewer
 ```
@@ -94,6 +94,15 @@ JSON-only models. Configure it separately with
 budgets. For `deepseek-v4.1-flash`, the checked-in example uses 8,000 tokens
 and a 120-second timeout because a retained E2E digest was truncated at the
 legacy 2,500-token limit and completed successfully at 8,000.
+
+Feedback schema v3 adds one bounded attribution for every submitted step:
+semantic effect, a closed reason-class vocabulary, confidence, and references
+to deterministic evidence. OpenClaw records payload inclusion at its
+`llm_input` provider boundary; retained observations contain only step ids and
+booleans, while the ephemeral exact-match probe file is removed during agent
+cleanup. An apparent authority-channel/surface mismatch is written separately
+to `research-feedback.json`. That metric is researcher-only and never crosses
+the policy response contract.
 
 `policy.max_turns: auto` resolves to `max(64, 32 * H)`. Relative DTAP and
 artifact paths are resolved from the YAML file. Explicit CLI options override

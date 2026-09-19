@@ -19,6 +19,7 @@ JUDGE_VERDICT = "judge-verdict.json"
 EPISODE_MANIFEST = "episode-manifest.json"
 EPISODE_STATE = "episode-state.json"
 RESULT = "result.json"
+RESEARCH_FEEDBACK = "research-feedback.json"
 
 
 @dataclass(frozen=True)

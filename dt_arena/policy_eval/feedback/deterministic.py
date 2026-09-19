@@ -216,6 +216,11 @@ def _apply_feedback_observation(
     )
     response = optional_bool("response_contains_injection", item.response_contains_injection)
     presented = optional_bool("presented_to_model", item.presented_to_model)
+    presentation_source = raw.get("presentation_observation_source", item.presentation_observation_source)
+    if presentation_source not in {
+        "provider_request", "runtime_context", "transcript_snapshot", "unavailable", "not_applicable"
+    }:
+        presentation_source = item.presentation_observation_source
     skill_used = optional_bool("skill_used", None)
     basis = raw.get("match_basis", item.match_basis)
     if basis not in _MATCH_BASES:
@@ -243,6 +248,7 @@ def _apply_feedback_observation(
             "access_call_status": access_status,
             "response_contains_injection": response,
             "presented_to_model": presented,
+            "presentation_observation_source": presentation_source,
             "evidence_call_indices": evidence,
             "response_match_state": _state(
                 response,

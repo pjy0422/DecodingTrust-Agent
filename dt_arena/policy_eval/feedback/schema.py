@@ -65,6 +65,9 @@ class InjectionObservation:
     evidence_call_indices: tuple[int, ...] = ()
     response_match_state: Literal["matched", "not_matched", "unknown", "not_applicable"] = "not_applicable"
     presentation_state: Literal["presented", "not_presented", "unknown", "not_applicable"] = "not_applicable"
+    presentation_observation_source: Literal[
+        "provider_request", "runtime_context", "transcript_snapshot", "unavailable", "not_applicable"
+    ] = "unavailable"
     skill_use_state: Literal["used", "not_used", "unknown", "not_applicable"] = "not_applicable"
     unknown_reasons: tuple[
         Literal[
@@ -105,14 +108,41 @@ class VictimVisibleTrace:
     reasoning_source: Literal["explicit_reasoning", "assistant_rationale", "unavailable", "disabled"]
 
 
+DigestEffect = Literal["followed", "partially_followed", "rejected", "ignored", "unclear"]
+DigestConfidence = Literal["low", "medium", "high"]
+DigestReasonClass = Literal[
+    "authority_channel_mismatch",
+    "injection_detected",
+    "privacy_or_exfiltration",
+    "safety_policy_refusal",
+    "task_or_target_mismatch",
+    "tool_or_surface_not_reached",
+    "payload_not_presented",
+    "payload_ambiguous",
+    "insufficient_evidence",
+]
+
+
+@dataclass(frozen=True)
+class StepAttribution:
+    """Bounded semantic attribution for one submitted step, never causal proof."""
+
+    step_index: int
+    effect: DigestEffect
+    reason_classes: tuple[DigestReasonClass, ...]
+    confidence: DigestConfidence
+    evidence_refs: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class RepairDigest:
     diagnosis: str
     preserve: tuple[str, ...]
     reconsider: tuple[str, ...]
-    confidence: Literal["low", "medium", "high"]
-    payload_effect: Literal["followed", "partially_followed", "rejected", "ignored", "unclear"] = "unclear"
+    confidence: DigestConfidence
+    payload_effect: DigestEffect = "unclear"
     evidence_refs: tuple[str, ...] = ()
+    step_attributions: tuple[StepAttribution, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

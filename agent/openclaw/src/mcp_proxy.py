@@ -14,7 +14,6 @@ import asyncio
 import hashlib
 import json
 import os
-import signal
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -120,6 +119,7 @@ class FeedbackObserver:
         self._response: Dict[int, Optional[bool]] = {}
         self._presented: Dict[int, Optional[bool]] = {}
         self._presentation_boundary: Dict[int, bool] = {}
+        self._presentation_source: Dict[int, str] = {}
         self._access_status: Dict[int, str] = {}
         self._matched_tool: Dict[int, str] = {}
         self._match_basis: Dict[int, str] = {}
@@ -136,6 +136,41 @@ class FeedbackObserver:
         self._response.setdefault(index, None)
         self._presented.setdefault(index, None)
         self._presentation_boundary.setdefault(index, False)
+
+    def provider_probe_registry(self) -> List[Dict[str, Any]]:
+        """Return the minimum ephemeral data needed by the llm_input hook."""
+        result: List[Dict[str, Any]] = []
+        for index, probe in sorted(self._probes.items()):
+            values = probe.get("payload_values")
+            if probe.get("supported") is not True or not isinstance(values, list):
+                continue
+            source = probe.get("presentation_source")
+            if probe.get("injection_type") == "environment":
+                source = "tool_result"
+            result.append(
+                {
+                    "step_index": index,
+                    "presentation_source": source,
+                    "target_tool": probe.get("target_tool"),
+                    "payload_values": [value for value in values if isinstance(value, str)],
+                }
+            )
+        return result
+
+    def observe_provider_input(self, observation: Any) -> None:
+        """Merge a raw-free observation emitted by OpenClaw's llm_input hook."""
+        if not isinstance(observation, dict) or observation.get("type") != "provider.input.observed":
+            return
+        index = observation.get("step_index")
+        if index not in self._probes or observation.get("boundary_observed") is not True:
+            return
+        self._presentation_boundary[index] = True
+        self._presentation_source[index] = "provider_request"
+        if self._probes[index].get("injection_type") == "environment":
+            self._saw_message_boundary = True
+        presented = observation.get("presented")
+        if isinstance(presented, bool):
+            self._presented[index] = bool(self._presented[index]) or presented
 
     @staticmethod
     def _tool_entry_matches(value: Any, target: str) -> bool:
@@ -202,6 +237,7 @@ class FeedbackObserver:
             if self._presentation_boundary[index]:
                 matched = candidate is not None and value_contains_all(candidate, values)
                 self._presented[index] = bool(self._presented[index]) or matched
+                self._presentation_source.setdefault(index, "runtime_context")
 
     @staticmethod
     def _pattern_matches(pattern: Dict[str, Any], qualified: str, arguments: Dict[str, Any]) -> bool:
@@ -265,6 +301,7 @@ class FeedbackObserver:
         for index, probe in self._probes.items():
             if self._response.get(index) is False:
                 self._presented[index] = False
+                self._presentation_source.setdefault(index, "transcript_snapshot")
                 continue
             if self._response.get(index) is not True:
                 continue
@@ -272,6 +309,7 @@ class FeedbackObserver:
             if isinstance(values, list) and all(isinstance(value, str) for value in values):
                 matched = any(value_contains_all(message, values) for message in tool_results)
                 self._presented[index] = bool(self._presented[index]) or matched
+                self._presentation_source.setdefault(index, "transcript_snapshot")
 
     def emit(self) -> None:
         if self._sink is None or self._emitted:
@@ -317,6 +355,7 @@ class FeedbackObserver:
                     if injection_type == "environment" else None
                 ),
                 presented_to_model=self._presented.get(index),
+                presentation_observation_source=self._presentation_source.get(index, "unavailable"),
                 matched_tool=self._matched_tool.get(index),
                 match_basis=(
                     self._match_basis.get(index, probe.get("match_basis", "payload_probe"))
@@ -886,7 +925,7 @@ class MCPProxyManager:
             )
 
             try:
-                port = await proxy.start(port=0)  # Auto-assign free port
+                await proxy.start(port=0)  # Auto-assign free port
                 self._proxies[server_name] = proxy
                 proxy_urls[server_name] = proxy.proxy_url
 
@@ -915,6 +954,20 @@ class MCPProxyManager:
 
     def register_feedback_probe(self, probe: Dict[str, Any]) -> None:
         self._feedback_observer.register(probe)
+
+    def write_provider_probe_registry(self, path: str) -> None:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(self._feedback_observer.provider_probe_registry(), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+
+    def observe_provider_input(self, observation: Any) -> None:
+        self._feedback_observer.observe_provider_input(observation)
 
     def observe_messages_snapshot(self, messages: Any) -> None:
         self._feedback_observer.observe_messages_snapshot(messages)
