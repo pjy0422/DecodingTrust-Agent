@@ -51,31 +51,6 @@ def test_e2e_result_is_printed_and_persisted(tmp_path: Path, capsys):
     assert not (tmp_path / ".result.json.tmp").exists()
 
 
-def _string_assignment(path: Path, name: str) -> str:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            if any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
-                if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                    return node.value.value
-    raise AssertionError(name)
-
-
-def _feedback_suffix(path: Path) -> str:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == "build_policy_prompt":
-            values = [
-                child.value for child in ast.walk(node)
-                if isinstance(child, ast.Constant)
-                and isinstance(child.value, str)
-                and "After a genuine failed victim execution" in child.value
-            ]
-            assert len(values) == 1
-            return values[0]
-    raise AssertionError("build_policy_prompt")
-
-
 def _env_keys(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     keys = set()
@@ -109,12 +84,72 @@ def _env_keys(path: Path) -> set[str]:
     return keys
 
 
+def test_policy_reporting_feature_flags_change_prompt_content():
+    from dt_arena.policy_eval.feedback import FeedbackMode
+    from dt_arena.policy_eval.planning.current import build_policy_prompt
+
+    plain = build_policy_prompt(
+        placement_enabled=True,
+        max_submissions=2,
+        feedback_mode=FeedbackMode.FINAL_DETERMINISTIC,
+    )
+    enabled = build_policy_prompt(
+        placement_enabled=True,
+        max_submissions=2,
+        feedback_mode=FeedbackMode.FINAL_DETERMINISTIC,
+        improvement_wishes=True,
+        dying_message=True,
+    )
+
+    assert "### Honest report — H=<victim execution number>" in plain
+    assert "Policy-harness improvement wish" not in plain
+    assert "Dying message" not in plain
+    assert "Policy-harness improvement wish" in enabled
+    assert "cannot modify the victim" in enabled
+    assert "Dying message" in enabled
+
+
+def test_accepted_receipt_carries_report_gate_and_terminal_optional_fields():
+    from dt_arena.policy_eval.policy_contract import PolicyContract
+
+    contract = PolicyContract(improvement_wishes=True, dying_message=True)
+    active = contract.accepted_submit(
+        submission=1,
+        success=False,
+        terminal=False,
+        remaining_submissions=1,
+    )
+    terminal = contract.accepted_submit(
+        submission=2,
+        success=False,
+        terminal=True,
+        remaining_submissions=0,
+    )
+
+    assert active["report_required"] == {
+        "h": 1,
+        "before_next_tool": True,
+        "fields": [
+            "outcome",
+            "evidence_and_uncertainty",
+            "next_policy_change",
+            "policy_harness_improvement_wish",
+        ],
+    }
+    assert terminal["report_required"]["fields"][-1] == "dying_message"
+
+
 def test_latest_holdout_prompt_is_byte_frozen():
     import hashlib
-    current = Path(policy_eval.__file__).resolve().parent / "planning/current.py"
-    prompt = _string_assignment(current, "PLACEMENT_POLICY_PROMPT_TEMPLATE").format(max_submissions=2)
-    prompt += _feedback_suffix(current)
-    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == "8f134e9eb4fe83cb2e5911071031a4becce943120e7290a8eb1960bb0549d72e"
+    from dt_arena.policy_eval.feedback import FeedbackMode
+    from dt_arena.policy_eval.planning.current import build_policy_prompt
+
+    prompt = build_policy_prompt(
+        placement_enabled=True,
+        max_submissions=2,
+        feedback_mode=FeedbackMode.FINAL_DETERMINISTIC,
+    )
+    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == "7cd089d92fc75790afdb47380cf98d97cfc6258533965e34a177d67a1a5dd1a3"
 
 
 def test_harness_and_planning_are_separate():

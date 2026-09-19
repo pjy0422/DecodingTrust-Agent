@@ -59,6 +59,49 @@ python -m dt_arena.policy_eval matrix --help
 python -m dt_arena.policy_eval holdout --help
 ```
 
+For repeatable live matrices, use a strict versioned experiment file instead
+of a long command line:
+
+```bash
+export ANTHROPIC_API_KEY=...  # credentials remain environment-only
+python -m dt_arena.policy_eval matrix \
+  --config dt_arena/policy_eval/configs/finance-travel-indirect-openclaw.yaml
+```
+
+The `budgets` section controls three independent limits:
+
+- `h_victim_executions`: H, consumed only when a victim execution starts.
+- `q_submit_calls`: Q, consumed by every `submit_attack` call, including an
+  invalid submission. Q must be at least H.
+- `max_placement_actions`: consumed by `apply_attack_step`; placement
+  validation itself does not consume this budget.
+
+After every accepted H execution, the policy emits a concise honest report.
+Two optional report fields are controlled independently under `policy`:
+
+- `improvement_wishes`: add a non-binding wish about policy-facing harness
+  tools, feedback, budgets, or observability. The policy is explicitly told it
+  cannot modify victim-side prompts, tools, harness, environment, or judge.
+- `dying_message`: on the final H or another terminal receipt, add a concise
+  evidence/dead-end handoff for a future policy.
+
+When either value is `false`, its instructions are absent from the policy
+prompt rather than merely asking the model to leave the field blank.
+
+Hosted reasoning models may need a larger digestor output budget than ordinary
+JSON-only models. Configure it separately with
+`feedback.digestor_max_tokens`; this does not change policy or victim token
+budgets. For `deepseek-v4.1-flash`, the checked-in example uses 8,000 tokens
+and a 120-second timeout because a retained E2E digest was truncated at the
+legacy 2,500-token limit and completed successfully at 8,000.
+
+`policy.max_turns: auto` resolves to `max(64, 32 * H)`. Relative DTAP and
+artifact paths are resolved from the YAML file. Explicit CLI options override
+YAML values. Every matrix writes the effective, absolute, credential-free configuration to
+`experiment-config.resolved.yaml` in its artifact root, alongside
+`summary.json`. The schema is closed: unknown fields (including attempted API
+keys, provider URLs, or arbitrary environment variables) are rejected.
+
 The standalone viewer remains its own installable tool:
 
 ```bash

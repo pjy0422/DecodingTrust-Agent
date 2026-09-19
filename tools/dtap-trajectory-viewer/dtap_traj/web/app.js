@@ -201,20 +201,20 @@ function eventCard(e,i){
   let body=e.text;
   if(kind==='tool_call') body=JSON.stringify(e.args||{},null,2);
   if(!body) body='';
-  return `<article class="event"><div class="event-head"><span class="kind ${esc(kind)}">${esc(kind.replace('_',' '))}</span>${tool?`<span class="toolname">${esc(tool)}</span>`:''}<span style="margin-left:auto;color:#657184;font-size:9px">#${i+1}</span></div><div class="event-body">${esc(body)}</div></article>`;
+  return `<article class="event copy-block"><div class="event-head"><span class="kind ${esc(kind)}">${esc(kind.replace('_',' '))}</span>${tool?`<span class="toolname">${esc(tool)}</span>`:''}<span class="event-number">#${i+1}</span><button type="button" class="copy-button" data-copy-block aria-label="Copy this event">Copy</button></div><div class="event-body" data-copy-content>${esc(body)}</div></article>`;
 }
 function timeline(events){ return `<div class="timeline">${(events||[]).map(eventCard).join('')||'<div class="empty">No events</div>'}</div>`; }
 function diffHtml(diff){
   if(!diff) return '<div class="empty">No original/submitted config pair found.</div>';
-  return `<pre class="diff">${esc(diff).split('\n').map(line=>{
+  return `<section class="copy-block standalone-block"><div class="block-tools"><span>Unified config diff</span><button type="button" class="copy-button" data-copy-block>Copy</button></div><pre class="diff" data-copy-content>${esc(diff).split('\n').map(line=>{
     const c=line.startsWith('+++')||line.startsWith('---')||line.startsWith('@@')?'hdr':line.startsWith('+')?'add':line.startsWith('-')?'del':'';
     return `<span class="${c}">${line}</span>`;
-  }).join('\n')}</pre>`;
+  }).join('\n')}</pre></section>`;
 }
 function submittedConfigHtml(data){
   const yaml=data?.config?.submitted;
   if(!yaml) return '<div class="empty">No submitted config found for this attempt.</div>';
-  return `<pre class="submitted-yaml">${esc(yaml)}</pre>`;
+  return `<section class="copy-block standalone-block"><div class="block-tools"><span>Submitted config.yaml</span><button type="button" class="copy-button" data-copy-block>Copy</button></div><pre class="submitted-yaml" data-copy-content>${esc(yaml)}</pre></section>`;
 }
 function judgeOutcome(component){
   if(component.success === null || component.success === undefined) return ['unknown','neutral'];
@@ -226,14 +226,14 @@ function judgeCard(component){
   const source=component.source==='llm_as_judge'?'LLM-as-judge':'Deterministic';
   const metadata=component.metadata&&Object.keys(component.metadata).length
     ? `<details><summary>Judge metadata</summary><pre>${esc(JSON.stringify(component.metadata,null,2))}</pre></details>`:'';
-  return `<article class="judge-card"><div class="judge-head"><h3>${esc(component.name)} judge</h3><span class="judge-source ${esc(component.source)}">${source}</span><span class="judge-outcome ${outcomeClass}">${esc(outcome)}</span></div>${component.message?`<div class="judge-message">${esc(component.message)}</div>`:''}${metadata}</article>`;
+  return `<article class="judge-card copy-block"><div class="judge-head"><h3>${esc(component.name)} judge</h3><span class="judge-source ${esc(component.source)}">${source}</span><span class="judge-outcome ${outcomeClass}">${esc(outcome)}</span><button type="button" class="copy-button" data-copy-block>Copy</button></div><div data-copy-content>${component.message?`<div class="judge-message">${esc(component.message)}</div>`:''}${metadata}</div></article>`;
 }
 function judgesHtml(judges){
   if(!judges||!judges.available) return '<div class="empty">No DTAP judge artifacts found.</div>';
   const cards=(judges.components||[]).map(judgeCard).join('');
   const firewall=judges.reward_firewall&&Object.keys(judges.reward_firewall).length
-    ? `<article class="judge-card firewall"><div class="judge-head"><h3>Reward firewall verdict</h3><span class="judge-source trusted">Trusted projection</span></div><pre>${esc(JSON.stringify(judges.reward_firewall,null,2))}</pre></article>`:'';
-  const error=judges.error?`<article class="judge-card error"><div class="judge-head"><h3>Judge error</h3></div><div class="judge-message">${esc(judges.error)}</div></article>`:'';
+    ? `<article class="judge-card firewall copy-block"><div class="judge-head"><h3>Reward firewall verdict</h3><span class="judge-source trusted">Trusted projection</span><button type="button" class="copy-button" data-copy-block>Copy</button></div><pre data-copy-content>${esc(JSON.stringify(judges.reward_firewall,null,2))}</pre></article>`:'';
+  const error=judges.error?`<article class="judge-card error copy-block"><div class="judge-head"><h3>Judge error</h3><button type="button" class="copy-button" data-copy-block>Copy</button></div><div class="judge-message" data-copy-content>${esc(judges.error)}</div></article>`:'';
   return `<div class="judges">${cards}${firewall}${error}</div>`;
 }
 function detailData(){
@@ -330,7 +330,7 @@ function breakdown(detail){
   const max=Math.max(...entries.map(([,value])=>Number(value)),1);
   return `<section class="tuning-card"><h3>Time breakdown</h3><div class="breakdown">${entries.map(([name,value])=>`<div><span>${esc(name)}</span><i style="width:${Math.max(2,Number(value)/max*100)}%"></i><b>${formatNumber(value)}s</b></div>`).join('')}</div></section>`;
 }
-function jsonCard(title,value){return `<section class="tuning-card"><h3>${esc(title)}</h3><pre>${esc(JSON.stringify(value||{},null,2))}</pre></section>`;}
+function jsonCard(title,value){return `<section class="tuning-card copy-block"><div class="component-head"><h3>${esc(title)}</h3><button type="button" class="copy-button" data-copy-block>Copy</button></div><pre data-copy-content>${esc(JSON.stringify(value||{},null,2))}</pre></section>`;}
 function comparisonHtml(comparison){
   if(!comparison)return '';
   const trials=comparison.trials||[];const keys=comparison.varying_config_keys||[];
@@ -398,6 +398,26 @@ function render(){
   bind(); if(performance)renderTuningDetail();else renderDetail();
 }
 function showFailure(err){console.error(err);$('#app').innerHTML=`<div class="empty"><div><strong>Explorer failed to load</strong>${esc(err.message)}</div></div>`;}
+async function writeClipboard(text){
+  if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(text);return;}
+  const input=document.createElement('textarea');
+  input.value=text;input.setAttribute('readonly','');input.style.position='fixed';input.style.opacity='0';
+  document.body.appendChild(input);input.select();
+  const copied=document.execCommand('copy');input.remove();
+  if(!copied)throw new Error('clipboard unavailable');
+}
+document.addEventListener('click',async event=>{
+  const button=event.target.closest('[data-copy-block]');if(!button)return;
+  event.preventDefault();event.stopPropagation();
+  const block=button.closest('.copy-block');const content=block?.querySelector('[data-copy-content]');
+  if(!content)return;
+  const original=button.textContent;
+  try{
+    await writeClipboard(content.innerText||content.textContent||'');
+    button.textContent='Copied';button.classList.add('copied');
+  }catch(_){button.textContent='Copy failed';button.classList.add('copy-failed');}
+  window.setTimeout(()=>{button.textContent=original;button.classList.remove('copied','copy-failed');},1400);
+});
 window.addEventListener('popstate',()=>{
   const next=modeFromLocation();
   if(next!==state.mode)setMode(next,{replace:true});

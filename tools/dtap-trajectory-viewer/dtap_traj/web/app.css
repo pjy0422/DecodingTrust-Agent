@@ -158,6 +158,15 @@ button { color: inherit; }
 .timeline { display:flex; flex-direction:column; gap:8px; }
 .event { content-visibility:auto; contain-intrinsic-size:110px; border:1px solid var(--event-border); border-radius:10px; background:var(--event-bg); overflow:hidden; }
 .event-head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--event-head-line); background:var(--event-head-bg); }
+.event-number { margin-left:auto; color:var(--muted); font-size:9px; }
+.copy-button { border:1px solid var(--line); border-radius:6px; padding:3px 7px; background:var(--control-bg); color:var(--muted); cursor:pointer; font-size:9px; line-height:1.2; }
+.copy-button:hover { color:var(--text); border-color:var(--accent); }
+.copy-button.copied { color:var(--green); border-color:var(--green); }
+.copy-button.copy-failed { color:var(--red); border-color:var(--red); }
+.block-tools,.component-head { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--muted); font-size:10px; }
+.block-tools { margin-bottom:7px; }
+.component-head h3 { margin:0; }
+.standalone-block { min-width:0; }
 .kind { font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.1em; }
 .kind.tool_call { color:var(--accent); } .kind.tool_result { color:var(--green); } .kind.thinking { color:var(--violet); } .kind.final { color:var(--amber); }
 .toolname { color:var(--tool-text); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:10px; }
@@ -190,6 +199,8 @@ button { color: inherit; }
 .tuning-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; align-items:start; }
 .tuning-card { min-width:0; border:1px solid var(--event-border); border-radius:10px; background:var(--event-bg); padding:14px; }
 .tuning-card h3 { margin:0 0 12px; font-size:12px; }
+.tuning-card .component-head { margin-bottom:12px; }
+.tuning-card .component-head h3 { margin:0; }
 .tuning-card pre { margin:0; max-height:360px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--tool-text); font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
 .brief { display:grid; grid-template-columns:120px minmax(0,1fr); gap:8px 12px; margin:0; font-size:10px; line-height:1.5; }
 .brief dt { color:var(--muted); }

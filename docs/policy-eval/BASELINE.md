@@ -7,7 +7,7 @@ Source provenance:
 - canonical source baseline expected by the migrator: `f1e8ee90fe725d394b4e9929947423ecaa01976c`
 - canonical DTAP base expected by the migrator: `e0323a521ba4ef88f8e14c1eccf68d0a3d19a458`
 - retained latest E2E artifact: `p3-holdout-live-20260909`
-- current prompt SHA-256: `8f134e9eb4fe83cb2e5911071031a4becce943120e7290a8eb1960bb0549d72e`
+- current prompt SHA-256: `7cd089d92fc75790afdb47380cf98d97cfc6258533965e34a177d67a1a5dd1a3`
 
 Current execution behavior is versioned and regression-tested:
 
@@ -28,6 +28,8 @@ Current execution behavior is versioned and regression-tested:
   retryable repair fields.
 - H counts victim executions. Invalid submissions consume Q but not H.
 - default live feedback is `final+deterministic`.
+- every accepted H execution produces an honest report; optional harness wishes
+  and terminal handoff messages are prompt-level feature flags.
 - the policy path preserves raw Claude Code stdout as `policy.jsonl`.
 - the real DTAP victim/judge path remains subprocess-isolated.
 

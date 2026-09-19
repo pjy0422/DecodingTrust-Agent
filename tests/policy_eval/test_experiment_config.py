@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+from argparse import Namespace
+from pathlib import Path
+
+import pytest
+import yaml
+
+from dt_arena.policy_eval.experiment_config import (
+    SCHEMA,
+    ExperimentConfigError,
+    load_experiment_config,
+    resolved_experiment_document,
+)
+
+
+ROOT = Path(__file__).resolve().parents[2]
+EXAMPLE = ROOT / "dt_arena/policy_eval/configs/finance-travel-indirect-openclaw.yaml"
+
+
+def test_checked_in_experiment_config_controls_independent_budgets() -> None:
+    raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    loaded = load_experiment_config(EXAMPLE)
+
+    assert loaded["dtap_root"] == ROOT
+    assert loaded["domains"] == ["finance", "travel"]
+    assert loaded["threat_models"] == ["indirect"]
+    assert loaded["max_submissions"] == raw["budgets"]["h_victim_executions"]
+    assert loaded["max_submit_calls"] == raw["budgets"]["q_submit_calls"]
+    assert loaded["max_placement_actions"] == raw["budgets"]["max_placement_actions"]
+    assert loaded["policy_max_turns"] is None
+    assert loaded["improvement_wishes"] is True
+    assert loaded["dying_message"] is True
+    assert loaded["digestor_max_tokens"] == 8_000
+    assert loaded["victim_agent_type"] == "openclaw"
+
+
+def test_config_is_closed_and_rejects_credentials(tmp_path: Path) -> None:
+    raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["provider"] = {"api_key": "must-not-be-stored"}
+    target = tmp_path / "config.yaml"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    with pytest.raises(ExperimentConfigError, match="unknown top-level field.*provider"):
+        load_experiment_config(target)
+
+
+def test_q_cannot_be_lower_than_h(tmp_path: Path) -> None:
+    raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["budgets"]["h_victim_executions"] = 5
+    raw["budgets"]["q_submit_calls"] = 4
+    target = tmp_path / "config.yaml"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    with pytest.raises(ExperimentConfigError, match="q_submit_calls must be >="):
+        load_experiment_config(target)
+
+
+def test_relative_paths_are_resolved_from_config_location(tmp_path: Path) -> None:
+    raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["paths"]["dtap_root"] = "repo"
+    raw["paths"]["artifacts_root"] = "runs/example"
+    target = tmp_path / "config.yaml"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    loaded = load_experiment_config(target)
+    assert loaded["dtap_root"] == (tmp_path / "repo").resolve()
+    assert loaded["artifacts_root"] == (tmp_path / "runs/example").resolve()
+
+
+def test_resolved_document_contains_no_environment_or_credentials() -> None:
+    values = load_experiment_config(EXAMPLE)
+    values["policy_max_turns"] = 160
+    args = Namespace(**values)
+
+    document = resolved_experiment_document(args)
+
+    assert document["schema"] == SCHEMA
+    assert document["budgets"] == {
+        "h_victim_executions": values["max_submissions"],
+        "q_submit_calls": values["max_submit_calls"],
+        "max_placement_actions": values["max_placement_actions"],
+    }
+    assert document["policy"]["improvement_wishes"] is True
+    assert document["policy"]["dying_message"] is True
+    rendered = yaml.safe_dump(document).lower()
+    assert "api_key" not in rendered
+    assert "auth_token" not in rendered
+    assert "environment" not in rendered

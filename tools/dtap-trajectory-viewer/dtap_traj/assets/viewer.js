@@ -39,13 +39,13 @@
     if (event.kind === 'tool_call') {
       const desc = event.injected_tool_desc;
       const description = desc ? `<details><summary>Tool description seen by agent</summary><pre>${spans(desc.text, desc.spans)}</pre></details>` : '';
-      return `<article class="row tool ${event.injection_target ? 'target' : ''}"><div class="icon">🔧</div><div class="body"><div class="label">Tool call${event.injection_target ? ' <span class="tag">injection target</span>' : ''}</div><div class="tool-name"><code>${esc(event.server)}</code><code>${esc(event.tool)}</code> ${args(event.args, event.arg_injection_spans)}</div>${description}</div></article>`;
+      return `<article class="row tool copy-block ${event.injection_target ? 'target' : ''}"><div class="icon">🔧</div><div class="body"><div class="label">Tool call${event.injection_target ? ' <span class="tag">injection target</span>' : ''}<button type="button" class="copy-button" data-copy-block>Copy</button></div><div data-copy-content><div class="tool-name"><code>${esc(event.server)}</code><code>${esc(event.tool)}</code> ${args(event.args, event.arg_injection_spans)}</div>${description}</div></div></article>`;
     }
     const pair = labels[event.kind];
     if (!pair) return '';
     const injected = event.injection_spans && event.injection_spans.length;
     const pre = event.kind === 'tool_result' || event.kind === 'judge';
-    return `<article class="row ${esc(event.kind)} ${injected ? 'target' : ''}"><div class="icon">${pair[0]}</div><div class="body"><div class="label">${pair[1]}${injected ? ' <span class="tag">contains submitted payload</span>' : ''}</div>${pre ? '<pre>' : '<div class="text">'}${spans(event.text, event.injection_spans)}${pre ? '</pre>' : '</div>'}</div></article>`;
+    return `<article class="row copy-block ${esc(event.kind)} ${injected ? 'target' : ''}"><div class="icon">${pair[0]}</div><div class="body"><div class="label">${pair[1]}${injected ? ' <span class="tag">contains submitted payload</span>' : ''}<button type="button" class="copy-button" data-copy-block>Copy</button></div>${pre ? '<pre data-copy-content>' : '<div class="text" data-copy-content>'}${spans(event.text, event.injection_spans)}${pre ? '</pre>' : '</div>'}</div></article>`;
   }
 
   function renderTimeline(id, timeline, emptyText) {
@@ -62,7 +62,7 @@
     if (!payloads.length) return;
     box.hidden = false;
     box.innerHTML = `<h2>Submitted attack payloads (${payloads.length})</h2>` + payloads.map((p) =>
-      `<div class="payload"><span class="tag">${esc(p.kind || 'attack')}</span>${p.tool ? ` <code>${esc(p.tool)}</code>` : ''}<pre>${esc(p.text)}</pre></div>`
+      `<div class="payload copy-block"><span class="tag">${esc(p.kind || 'attack')}</span>${p.tool ? ` <code>${esc(p.tool)}</code>` : ''}<button type="button" class="copy-button" data-copy-block>Copy</button><pre data-copy-content>${esc(p.text)}</pre></div>`
     ).join('');
   }
 
@@ -85,8 +85,8 @@
     const status = comparison.identical ? 'identical' : 'changed';
     box.innerHTML = `<h2>Configuration comparison <span class="config-status ${status}">${status}</span></h2>
       <div class="paths"><code>${esc(comparison.original_path)}</code> → <code>${esc(comparison.submitted_path)}</code></div>
-      <details open><summary>Unified diff</summary><pre class="diff">${renderDiff(comparison.diff)}</pre></details>
-      <div class="config-grid"><details><summary>Original config.yaml</summary><pre>${esc(comparison.original)}</pre></details><details><summary>Submitted config.yaml</summary><pre>${esc(comparison.submitted)}</pre></details></div>`;
+      <details open class="copy-block"><summary>Unified diff <button type="button" class="copy-button" data-copy-block>Copy</button></summary><pre class="diff" data-copy-content>${renderDiff(comparison.diff)}</pre></details>
+      <div class="config-grid"><details class="copy-block"><summary>Original config.yaml <button type="button" class="copy-button" data-copy-block>Copy</button></summary><pre data-copy-content>${esc(comparison.original)}</pre></details><details class="copy-block"><summary>Submitted config.yaml <button type="button" class="copy-button" data-copy-block>Copy</button></summary><pre data-copy-content>${esc(comparison.submitted)}</pre></details></div>`;
   }
 
   function selectPanel(target) {
@@ -99,6 +99,38 @@
   }
 
   document.querySelectorAll('.tabs button').forEach((button) => button.addEventListener('click', () => selectPanel(button.dataset.target)));
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const input = document.createElement('textarea');
+    input.value = text;
+    input.setAttribute('readonly', '');
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.select();
+    const copied = document.execCommand('copy');
+    input.remove();
+    if (!copied) throw new Error('clipboard unavailable');
+  }
+  document.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-copy-block]');
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const content = button.closest('.copy-block')?.querySelector('[data-copy-content]');
+    if (!content) return;
+    const original = button.textContent;
+    try {
+      await copyText(content.innerText || content.textContent || '');
+      button.textContent = 'Copied';
+    } catch (_) {
+      button.textContent = 'Copy failed';
+    }
+    window.setTimeout(() => { button.textContent = original; }, 1400);
+  });
   renderComparison();
   renderPayloads();
   renderTimeline('policy-timeline', data.policy_timeline, 'No policy trajectory was supplied. Use --policy-trace.');
