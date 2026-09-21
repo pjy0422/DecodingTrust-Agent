@@ -29,6 +29,8 @@ def test_checked_in_experiment_config_controls_independent_budgets() -> None:
     assert loaded["max_submissions"] == raw["budgets"]["h_victim_executions"]
     assert loaded["max_submit_calls"] == raw["budgets"]["q_submit_calls"]
     assert loaded["max_placement_actions"] == raw["budgets"]["max_placement_actions"]
+    assert loaded["policy_engine"] == "dt-arms-upstream"
+    assert loaded["dt_arms_max_iterations"] == 10
     assert loaded["policy_max_turns"] is None
     assert loaded["harness_protocol"] == "v1"
     assert loaded["improvement_wishes"] is True
@@ -86,6 +88,8 @@ def test_resolved_document_contains_no_environment_or_credentials() -> None:
     assert document["policy"]["improvement_wishes"] is True
     assert document["policy"]["dying_message"] is True
     assert document["policy"]["harness_protocol"] == "v1"
+    assert document["policy"]["engine"] == "dt-arms-upstream"
+    assert document["dt_arms"]["max_iterations"] == 10
     rendered = yaml.safe_dump(document).lower()
     assert "api_key" not in rendered
     assert "auth_token" not in rendered
@@ -94,6 +98,7 @@ def test_resolved_document_contains_no_environment_or_credentials() -> None:
 
 def test_lazy_schema_protocol_is_explicit_and_closed(tmp_path: Path) -> None:
     raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["policy"]["engine"] = "claude-code"
     raw["policy"]["harness_protocol"] = "lazy-schema-v2"
     target = tmp_path / "config.yaml"
     target.write_text(yaml.safe_dump(raw), encoding="utf-8")
@@ -104,6 +109,44 @@ def test_lazy_schema_protocol_is_explicit_and_closed(tmp_path: Path) -> None:
     target.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(ExperimentConfigError, match="unsupported policy harness protocol"):
         load_experiment_config(target)
+
+
+def test_dt_arms_rejects_claude_only_lazy_schema_protocol(tmp_path: Path) -> None:
+    raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["policy"]["harness_protocol"] = "lazy-schema-v2"
+    target = tmp_path / "config.yaml"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    with pytest.raises(ExperimentConfigError, match="applies only.*claude-code"):
+        load_experiment_config(target)
+
+
+def test_policy_engine_is_explicit_and_closed(tmp_path: Path) -> None:
+    raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["policy"]["engine"] = "claude-code"
+    target = tmp_path / "config.yaml"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    assert load_experiment_config(target)["policy_engine"] == "claude-code"
+
+    raw["policy"]["engine"] = "other"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ExperimentConfigError, match="unsupported policy engine"):
+        load_experiment_config(target)
+
+
+def test_dt_arms_rejects_victim_harness_not_supported_upstream(tmp_path: Path) -> None:
+    raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["victim"]["harness"] = "hermes"
+    target = tmp_path / "config.yaml"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    with pytest.raises(ExperimentConfigError, match="does not support victim harness"):
+        load_experiment_config(target)
+
+    raw["policy"]["engine"] = "claude-code"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    assert load_experiment_config(target)["victim_agent_type"] == "hermes"
 
 
 def test_explicit_dataset_tasks_are_closed_and_retained(tmp_path: Path) -> None:

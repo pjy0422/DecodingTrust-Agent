@@ -33,6 +33,7 @@ def test_experiment_ui_has_hierarchical_multi_task_picker():
     assert "job-progress-summary" in app_js
     assert "Task progress updates when Refresh is clicked" in app_js
     assert "Full feedback evidence" in app_js
+    assert 'id="experimentPolicyEngine"' in app_js
     assert 'id="experimentHarnessProtocol"' in app_js
     assert 'id="experimentPlanningStrategy"' in app_js
     assert 'id="experimentVictimHarness"' in app_js
@@ -40,6 +41,7 @@ def test_experiment_ui_has_hierarchical_multi_task_picker():
     assert "updateExperimentControl" in app_js
     assert "writeYamlControl" in app_js
     assert "lazy-schema-v2" in (web / "yaml_controls.js").read_text(encoding="utf-8")
+    assert "dt-arms-upstream" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert ".dataset-browser" in css
     assert ".runtime-fields" in css
     assert ".job-task-list" in css
@@ -60,6 +62,7 @@ def write_episode(root: Path, domain: str, threat: str, i: int, attack: bool = F
                 "episode_status": "succeeded" if attack else "exhausted",
                 "risk_category": f"{domain}-risk",
                 "task_id": str(i),
+                "policy_engine": "claude-code",
                 "policy_model": "policy-test-model",
                 "victim_model": "victim-test-model",
                 "victim_agent_type": "openai_sdk",
@@ -260,6 +263,7 @@ def test_api_policy_victim_combined_and_config(tmp_path):
     ep = episodes["items"][0]
     assert ep["task_id"].startswith("browser-malicious-")
     assert ep["dataset_path"].startswith("browser/malicious/")
+    assert ep["policy_engine"] == "claude-code"
     assert ep["policy_model"] == "policy-test-model"
     assert ep["victim_model"] == "victim-test-model"
     assert ep["victim_agent_type"] == "openai_sdk"

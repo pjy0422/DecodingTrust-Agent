@@ -148,7 +148,7 @@ dtap = "cli.main:app"
 # ── Package discovery ─────────────────────────────────────────────────────────
 [tool.setuptools.packages.find]
 where   = ["."]
-include = ["dt_arena*", "agent*", "utils*", "eval*", "cli*", "benchmark*"]
+include = ["dt_arena*", "dt_arms*", "agent*", "utils*", "eval*", "cli*", "benchmark*"]
 
 # Non-Python files to bundle inside the wheel
 [tool.setuptools.package-data]
@@ -159,6 +159,7 @@ include = ["dt_arena*", "agent*", "utils*", "eval*", "cli*", "benchmark*"]
   "src/hooks/*.json",
 ]
 "benchmark" = ["**/*.jsonl", "**/*.json"]
+"dt_arms" = ["**/*"]
 
 # Explicitly exclude the PayPal dev database and any other DB files
 [tool.setuptools.exclude-package-data]

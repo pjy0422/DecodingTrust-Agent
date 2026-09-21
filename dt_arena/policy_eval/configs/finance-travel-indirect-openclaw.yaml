@@ -16,6 +16,9 @@ models:
   victim: deepseek-v4.1-flash
 
 policy:
+  # DT Arms is the primary native red-team engine. Use claude-code for the
+  # retained legacy policy-MCP control.
+  engine: dt-arms-upstream
   planning_strategy: current
   max_turns: auto
   improvement_wishes: true
@@ -42,6 +45,20 @@ feedback:
   digestor_max_tokens: 50000
   digestor_timeout_seconds: 120
   reasoning_summary: false
+
+dt_arms:
+  judge_model: deepseek-v4.1-flash
+  max_iterations: 10
+  use_memory: false
+  update_memory: false
+  memory_save_mode: success
+  auto_aggregate_memory: false
+  allow_quit: true
+  multi_turn: false
+  max_turns_per_session: 5
+  injection_override: []
+  allowed_skill_names: []
+  allowed_skill_types: []
 
 execution:
   max_parallel: 16

@@ -426,6 +426,9 @@ def extract_episode_metadata(
         or _text(run_summary.get("policy_model"))
         or _policy_trace_model(path / "policy.jsonl")
     )
+    policy_engine = _text(merged.get("policy_engine")) or _text(
+        run_summary.get("policy_engine")
+    )
     victim_model = _text(merged.get("victim_model")) or _text(run_summary.get("victim_model")) or victim_trace_model
     victim_agent_type = (
         _text(merged.get("victim_agent_type"))
@@ -440,6 +443,7 @@ def extract_episode_metadata(
         "run_name": run_name,
         "task_id": task_id,
         "dataset_path": dataset_path,
+        "policy_engine": policy_engine,
         "policy_model": policy_model,
         "victim_model": victim_model,
         "victim_agent_type": victim_agent_type,
@@ -484,6 +488,7 @@ def index_root(root: str | Path, db: TrajectoryDB) -> dict[str, Any]:
                 for key in (
                     "task_id",
                     "dataset_path",
+                    "policy_engine",
                     "policy_model",
                     "victim_model",
                     "victim_agent_type",
