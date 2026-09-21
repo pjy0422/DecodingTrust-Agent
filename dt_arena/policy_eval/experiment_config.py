@@ -211,7 +211,7 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
         "feedback_mode": _string(feedback.get("mode", "disabled"), "feedback.mode"),
         "digestor_model": _string(feedback.get("digestor_model", "glm-5.2"), "feedback.digestor_model"),
         "digestor_max_tokens": _positive_int(
-            feedback.get("digestor_max_tokens", 2_500), "feedback.digestor_max_tokens"
+            feedback.get("digestor_max_tokens", 50_000), "feedback.digestor_max_tokens"
         ),
         "digestor_timeout": _positive_number(
             feedback.get("digestor_timeout_seconds", 30.0),

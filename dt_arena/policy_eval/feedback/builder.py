@@ -15,6 +15,7 @@ from ..actions import ValidatedAttackStep
 from ..artifact_contract import FEEDBACK_EVIDENCE
 from .deterministic import ParsedMCPTrace, extract_deterministic_feedback, parse_mcp_events
 from .digestor import Digestor, DigestorObservation, ReasoningSummarizer, validate_repair_digest
+from .providers import DigestorProviderError
 from .schema import FeedbackMode, ReasoningSummaryConfig, compact_feedback_v4, deterministic_to_dict
 from .victim_trace import build_victim_trace, extract_final_response, load_trajectory, sanitize_trace_value
 
@@ -111,18 +112,64 @@ class FeedbackBuilder:
         (target_dir / "research-feedback.json").write_text(rendered, encoding="utf-8")
         (self.research_output_root / "research-feedback.json").write_text(rendered, encoding="utf-8")
 
-    @staticmethod
-    def _retain_full_evidence(attempt_root: Path, result: Mapping[str, Any]) -> None:
-        rendered = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        target = attempt_root / FEEDBACK_EVIDENCE
-        temporary = target.with_suffix(".tmp")
-        temporary.write_text(rendered, encoding="utf-8")
-        temporary.replace(target)
+    def _retain_full_evidence(self, attempt_root: Path, result: Mapping[str, Any]) -> None:
+        cleaned = self._signal_evidence(result)
+        rendered = json.dumps(cleaned, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        targets = [attempt_root / FEEDBACK_EVIDENCE]
+        if self.research_output_root is not None:
+            attempt_name = attempt_root.parent.name
+            if re.fullmatch(r"attempt-[0-9]{4}", attempt_name):
+                exported = self.research_output_root / "attempts" / attempt_name
+                exported.mkdir(parents=True, exist_ok=True)
+                targets.extend(
+                    (exported / FEEDBACK_EVIDENCE, self.research_output_root / FEEDBACK_EVIDENCE)
+                )
+        for target in targets:
+            temporary = target.with_suffix(".tmp")
+            temporary.write_text(rendered, encoding="utf-8")
+            temporary.replace(target)
 
     @classmethod
-    def _finish(cls, attempt_root: Path, result: Mapping[str, Any]) -> dict[str, Any]:
-        cls._retain_full_evidence(attempt_root, result)
+    def _signal_evidence(cls, value: Any, *, key: str = "") -> Any:
+        """Remove structurally valid but non-informative researcher evidence."""
+
+        if isinstance(value, Mapping):
+            result: dict[str, Any] = {}
+            for child_key, child in value.items():
+                if child_key in {
+                    "confidence",
+                    "payload_effect",
+                    "step_attributions",
+                    "unknown_reasons",
+                }:
+                    continue
+                cleaned = cls._signal_evidence(child, key=str(child_key))
+                if cleaned in (None, "unknown", "not_applicable", "unavailable", [], (), {}):
+                    continue
+                result[str(child_key)] = cleaned
+            return result
+        if isinstance(value, (list, tuple)):
+            return [
+                cleaned
+                for item in value
+                if (cleaned := cls._signal_evidence(item, key=key))
+                not in (None, "unknown", "not_applicable", "unavailable", [], (), {})
+            ]
+        return value
+
+    def _finish(self, attempt_root: Path, result: Mapping[str, Any]) -> dict[str, Any]:
+        self._retain_full_evidence(attempt_root, result)
         return compact_feedback_v4(result)
+
+    @staticmethod
+    def _digestor_failure_code(error: Exception) -> str:
+        if isinstance(error, DigestorProviderError):
+            return error.code
+        if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
+            return "timeout"
+        if isinstance(error, (TypeError, ValueError)):
+            return "schema_validation_failed"
+        return "unexpected_error"
 
     @staticmethod
     def _single_regular_artifact(root: Path, name: str, max_bytes: int) -> Path | None:
@@ -279,9 +326,12 @@ class FeedbackBuilder:
                 final_response=final_response,
             )
             result["digest"] = validated_digest.to_dict()
-        except Exception:
+        except Exception as error:
             # Optional-analysis timeout/failure cannot alter an already-recorded attempt.
-            pass
+            result["digestor_diagnostic"] = {
+                "status": "failed",
+                "code": self._digestor_failure_code(error),
+            }
         self._write_surface_mismatch_metric(
             attempt_root=attempt_root,
             deterministic=deterministic,

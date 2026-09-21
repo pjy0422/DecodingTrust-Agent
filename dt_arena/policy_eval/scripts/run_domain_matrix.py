@@ -743,7 +743,7 @@ def main() -> None:
     parser.add_argument(
         "--digestor-max-tokens",
         type=int,
-        default=config_defaults.get("digestor_max_tokens", 2_500),
+        default=config_defaults.get("digestor_max_tokens", 50_000),
     )
     parser.add_argument(
         "--digestor-timeout", type=float, default=config_defaults.get("digestor_timeout", 30.0)

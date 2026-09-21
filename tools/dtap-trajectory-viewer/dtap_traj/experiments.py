@@ -17,6 +17,7 @@ import yaml
 
 
 _RUN_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+_AUTO_RUN_PREFIX = "viewer-e2e-"
 _MAX_YAML_BYTES = 128 * 1024
 _VIEWER_MAX_PARALLEL = 16
 
@@ -147,6 +148,21 @@ class ExperimentManager:
             "max_parallel": _VIEWER_MAX_PARALLEL,
         }
 
+    def _run_name_taken(self, run_name: str) -> bool:
+        if (self.artifact_root / run_name).exists():
+            return True
+        return any(
+            _read_json(path).get("run_name") == run_name
+            for path in self.jobs_dir.glob("*/job.json")
+        )
+
+    def _fresh_auto_run_name(self) -> str:
+        base = datetime.now(UTC).strftime(f"{_AUTO_RUN_PREFIX}%Y-%m-%dT%H-%M-%S-%fZ")
+        candidate = base
+        while self._run_name_taken(candidate):
+            candidate = f"{base}-{secrets.token_hex(2)}"
+        return candidate
+
     def _normalized(
         self,
         yaml_text: str,
@@ -270,10 +286,16 @@ class ExperimentManager:
         selected_tasks: list[str] | None = None,
     ) -> dict[str, Any]:
         normalized, resolved, output = self._normalized(yaml_text, run_name, selected_tasks)
-        if output.exists() and not resolved["resume"]:
-            raise ExperimentLaunchError(
-                f"artifact run already exists: {run_name}; choose another name or enable resume"
-            )
+        if self._run_name_taken(run_name) and not resolved["resume"]:
+            if run_name.startswith(_AUTO_RUN_PREFIX):
+                run_name = self._fresh_auto_run_name()
+                normalized, resolved, output = self._normalized(
+                    yaml_text, run_name, selected_tasks
+                )
+            else:
+                raise ExperimentLaunchError(
+                    f"artifact run already exists: {run_name}; choose another name or enable resume"
+                )
         job_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(4)
         job_dir = self.jobs_dir / job_id
         job_dir.mkdir()

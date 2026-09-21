@@ -91,18 +91,16 @@ prompt rather than merely asking the model to leave the field blank.
 Hosted reasoning models may need a larger digestor output budget than ordinary
 JSON-only models. Configure it separately with
 `feedback.digestor_max_tokens`; this does not change policy or victim token
-budgets. For `deepseek-v4.1-flash`, the checked-in example uses 8,000 tokens
-and a 120-second timeout because a retained E2E digest was truncated at the
-legacy 2,500-token limit and completed successfully at 8,000.
+budgets. For `deepseek-v4.1-flash`, the default and checked-in example use
+50,000 tokens and a 120-second timeout because reasoning tokens are included in
+the hosted output budget and smaller limits repeatedly truncated the final JSON.
 
-Feedback schema v3 adds one bounded attribution for every submitted step:
-semantic effect, a closed reason-class vocabulary, confidence, and references
-to deterministic evidence. OpenClaw records payload inclusion at its
-`llm_input` provider boundary; retained observations contain only step ids and
-booleans, while the ephemeral exact-match probe file is removed during agent
-cleanup. An apparent authority-channel/surface mismatch is written separately
-to `research-feedback.json`. That metric is researcher-only and never crosses
-the policy response contract.
+Policy feedback is signal-only: it retains the final response, exact victim
+tool sequence, deterministic step signals, and digestor tool analysis keyed by
+exact qualified tool names. Unknown/inapplicable fields and legacy semantic
+enum blocks are omitted. OpenClaw records payload inclusion at its `llm_input`
+provider boundary; the ephemeral exact-match probe file is removed during
+agent cleanup. Researcher evidence is retained separately and sanitized.
 
 `policy.max_turns: auto` resolves to `max(64, 32 * H)`. Relative DTAP and
 artifact paths are resolved from the YAML file. Explicit CLI options override

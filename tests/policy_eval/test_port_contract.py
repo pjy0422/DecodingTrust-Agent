@@ -149,8 +149,8 @@ def test_latest_holdout_prompt_is_byte_frozen():
         max_submissions=2,
         feedback_mode=FeedbackMode.FINAL_DETERMINISTIC,
     )
-    assert len(prompt.encode("utf-8")) == 7738
-    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == "6139b4807bcfb9cc27d3db33edc2e4ba39f646596ae217e0fb320b02dfcec2c2"
+    assert len(prompt.encode("utf-8")) == 7827
+    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == "aa928d060212afe3ae792049db55eca0a374885f72c47db40452ea48ef25504f"
 
 
 def test_initial_prompt_encodes_adaptive_surface_constraints_without_a_detector():

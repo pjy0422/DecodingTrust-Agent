@@ -200,9 +200,152 @@ def _validate_feedback_v4(value: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+def _validate_signal_feedback(value: dict[str, Any]) -> dict[str, Any]:
+    """Validate the unversioned, signal-only current policy projection."""
+
+    allowed = {
+        "final_response",
+        "tool_sequence",
+        "steps",
+        "tool_analysis",
+        "guidance",
+        "trace_incomplete",
+        "reasoning_summary",
+    }
+    _exact_keys(value, allowed, required={"final_response", "tool_sequence"})
+    if not isinstance(value["final_response"], str) or not isinstance(
+        value["tool_sequence"], (list, tuple)
+    ):
+        raise PolicyContractViolation("invalid feedback schema")
+    tools: list[str] = []
+    for call in value["tool_sequence"]:
+        if not isinstance(call, Mapping):
+            raise PolicyContractViolation("invalid feedback schema")
+        _exact_keys(call, {"tool", "status"}, required={"tool", "status"})
+        if not isinstance(call["tool"], str) or call["status"] not in {
+            "ok",
+            "error",
+            "incomplete",
+        }:
+            raise PolicyContractViolation("invalid feedback schema")
+        tools.append(call["tool"])
+    if "trace_incomplete" in value and value["trace_incomplete"] is not True:
+        raise PolicyContractViolation("invalid feedback schema")
+
+    steps = value.get("steps", ())
+    if not isinstance(steps, (list, tuple)):
+        raise PolicyContractViolation("invalid feedback schema")
+    seen_steps: set[int] = set()
+    for step in steps:
+        if not isinstance(step, Mapping):
+            raise PolicyContractViolation("invalid feedback schema")
+        required = {"step_index"}
+        step_allowed = required | {
+            "target_state",
+            "matched_tool",
+            "call_indices",
+            "response_match",
+        }
+        _exact_keys(step, step_allowed, required=required)
+        index = step["step_index"]
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or index < 0
+            or index in seen_steps
+            or set(step) == required
+        ):
+            raise PolicyContractViolation("invalid feedback schema")
+        seen_steps.add(index)
+        if step.get("target_state") not in {
+            None,
+            "called",
+            "not_called",
+            "accessed",
+            "not_accessed",
+            "used",
+            "not_used",
+            "error",
+            "incomplete",
+        }:
+            raise PolicyContractViolation("invalid feedback schema")
+        if "matched_tool" in step and not isinstance(step["matched_tool"], str):
+            raise PolicyContractViolation("invalid feedback schema")
+        indices = step.get("call_indices", ())
+        if not isinstance(indices, (list, tuple)) or any(
+            isinstance(item, bool)
+            or not isinstance(item, int)
+            or item < 0
+            or item >= len(tools)
+            for item in indices
+        ):
+            raise PolicyContractViolation("invalid feedback schema")
+        if step.get("response_match") not in {None, "matched", "not_matched"}:
+            raise PolicyContractViolation("invalid feedback schema")
+
+    analysis = value.get("tool_analysis", ())
+    if not isinstance(analysis, (list, tuple)):
+        raise PolicyContractViolation("invalid feedback schema")
+    seen_calls: set[int] = set()
+    for item in analysis:
+        if not isinstance(item, Mapping):
+            raise PolicyContractViolation("invalid feedback schema")
+        required = {"call_index", "tool", "summary"}
+        _exact_keys(item, required | {"injection_handling"}, required=required)
+        call_index = item["call_index"]
+        if (
+            isinstance(call_index, bool)
+            or not isinstance(call_index, int)
+            or call_index < 0
+            or call_index >= len(tools)
+            or call_index in seen_calls
+            or item["tool"] != tools[call_index]
+            or not isinstance(item["summary"], str)
+            or not item["summary"].strip()
+            or len(item["summary"]) > 1_000
+            or item.get("injection_handling")
+            not in {None, "followed", "partially_followed", "rejected", "ignored"}
+        ):
+            raise PolicyContractViolation("invalid feedback schema")
+        seen_calls.add(call_index)
+
+    guidance = value.get("guidance")
+    if guidance is not None:
+        if not isinstance(guidance, Mapping):
+            raise PolicyContractViolation("invalid feedback schema")
+        _exact_keys(
+            guidance,
+            {"diagnosis", "preserve", "reconsider"},
+            required={"diagnosis"},
+        )
+        if not isinstance(guidance["diagnosis"], str) or not guidance["diagnosis"].strip():
+            raise PolicyContractViolation("invalid feedback schema")
+        for key in ("preserve", "reconsider"):
+            if key in guidance and (
+                not isinstance(guidance[key], (list, tuple))
+                or not guidance[key]
+                or any(not isinstance(pointer, str) for pointer in guidance[key])
+            ):
+                raise PolicyContractViolation("invalid feedback schema")
+    summary = value.get("reasoning_summary")
+    if summary is not None:
+        if not isinstance(summary, Mapping):
+            raise PolicyContractViolation("invalid feedback schema")
+        _exact_keys(summary, {"source", "summary"}, required={"source", "summary"})
+        if (
+            summary["source"] not in {"explicit_reasoning", "assistant_rationale"}
+            or not isinstance(summary["summary"], str)
+            or not summary["summary"].strip()
+        ):
+            raise PolicyContractViolation("invalid feedback schema")
+    return value
+
+
 def _validate_feedback_projection(raw: Mapping[str, Any]) -> dict[str, Any]:
     """Validate the M7 DTO before it crosses the existing leakage guard."""
     value = dict(raw)
+    if "schema_version" not in value:
+        return _validate_signal_feedback(value)
     if value.get("schema_version") == 4:
         return _validate_feedback_v4(value)
     _exact_keys(
