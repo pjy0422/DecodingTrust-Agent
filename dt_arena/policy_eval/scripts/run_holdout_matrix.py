@@ -14,6 +14,8 @@ import sys
 import time
 from pathlib import Path
 
+from dt_arena.policy_eval.protocol import HARNESS_PROTOCOLS
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -24,6 +26,11 @@ def main() -> None:
     parser.add_argument("--retry-delay", type=float, default=30.0)
     parser.add_argument("--policy-model", default="deepseek-v4-flash")
     parser.add_argument("--planning-strategy", default="current")
+    parser.add_argument(
+        "--harness-protocol",
+        choices=HARNESS_PROTOCOLS,
+        default="v1",
+    )
     parser.add_argument("--victim-model", default="deepseek-v4-flash")
     parser.add_argument(
         "--feedback-mode",
@@ -55,6 +62,8 @@ def main() -> None:
         args.policy_model,
         "--planning-strategy",
         args.planning_strategy,
+        "--harness-protocol",
+        args.harness_protocol,
         "--victim-model",
         args.victim_model,
         "--victim-agent-type",

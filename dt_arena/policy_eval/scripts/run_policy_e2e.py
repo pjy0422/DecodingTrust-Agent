@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from dt_arena.policy_eval.harness import ClaudeCodeHarness, HarnessRequest
 from dt_arena.policy_eval.planning import PlanningContext, create_planning_strategy, planning_strategy_names
+from dt_arena.policy_eval.protocol import (
+    HARNESS_PROTOCOL_LAZY_SCHEMA_V2,
+    HARNESS_PROTOCOL_V1,
+    HARNESS_PROTOCOLS,
+)
 
 import argparse
 import asyncio
@@ -59,6 +64,7 @@ PLACEMENT_POLICY_TOOLS = TOOLS | {
     "mcp__dtap__apply_attack_step",
     "mcp__dtap__validate_placement",
 }
+SCHEMA_TOOL = "mcp__dtap__get_tool_schema"
 DISALLOWED_NATIVE_TOOLS = {
     "Bash",
     "Read",
@@ -258,6 +264,7 @@ async def _main(args) -> None:
         feedback_mode=feedback_mode,
         improvement_wishes=args.improvement_wishes,
         dying_message=args.dying_message,
+        harness_protocol=args.harness_protocol,
     )
     planning_strategy = create_planning_strategy(args.planning_strategy)
     policy_prompt_text = planning_strategy.build_prompt(planning_context)
@@ -372,6 +379,7 @@ async def _main(args) -> None:
                         "improvement_wishes": args.improvement_wishes,
                         "dying_message": args.dying_message,
                     },
+                    "harness_protocol": args.harness_protocol,
                 },
                 indent=2,
                 sort_keys=True,
@@ -441,9 +449,17 @@ async def _main(args) -> None:
         )
         port = _free_port()
         server = (
-            create_policy_mcp_server(registry, security_policy=policy)
+            create_policy_mcp_server(
+                registry,
+                security_policy=policy,
+                harness_protocol=args.harness_protocol,
+            )
             if args.placement_enabled
-            else create_core_policy_mcp_server(registry, security_policy=policy)
+            else create_core_policy_mcp_server(
+                registry,
+                security_policy=policy,
+                harness_protocol=args.harness_protocol,
+            )
         )
         server_task = asyncio.create_task(
             server.run_async(
@@ -500,6 +516,8 @@ async def _main(args) -> None:
                 if os.environ.get(POLICY_AUTH_FROM_API_KEY_ENV) == "1":
                     env["ANTHROPIC_AUTH_TOKEN"] = env["ANTHROPIC_API_KEY"]
                 allowed_tools = PLACEMENT_POLICY_TOOLS if args.placement_enabled else TOOLS
+                if args.harness_protocol == HARNESS_PROTOCOL_LAZY_SCHEMA_V2:
+                    allowed_tools = allowed_tools | {SCHEMA_TOOL}
                 request = HarnessRequest(
                     prompt=policy_prompt_text,
                     cwd=root,
@@ -530,6 +548,16 @@ async def _main(args) -> None:
                 # plan has nothing to apply or read back. The four core calls
                 # remain mandatory for every authored E2E plan.
                 missing = TOOLS - _tool_names(stdout)
+                if (
+                    args.harness_protocol == HARNESS_PROTOCOL_LAZY_SCHEMA_V2
+                    and any(
+                        step.get("type") in {"tool", "environment"}
+                        for plan in runner.plans
+                        for step in plan
+                    )
+                    and SCHEMA_TOOL not in _tool_names(stdout)
+                ):
+                    missing.add(SCHEMA_TOOL)
                 if missing:
                     raise RuntimeError(f"GLM policy missed required tools: {sorted(missing)}")
                 for secret in (credentials.mcp_bearer_token, str(snapshot.task_dir)):
@@ -613,6 +641,7 @@ async def _main(args) -> None:
                 "reasoning_summary_enabled": args.reasoning_summary,
                 "improvement_wishes_enabled": args.improvement_wishes,
                 "dying_message_enabled": args.dying_message,
+                "harness_protocol": args.harness_protocol,
                 "digestor_usage": (digest_completer.usage.to_dict() if digest_completer else None),
                 "artifacts_dir": str(artifacts_dir) if artifacts_dir else None,
             }
@@ -656,6 +685,12 @@ def main() -> None:
         choices=planning_strategy_names(),
         default="current",
         help="planning algorithm; all strategies reuse the same policy harness",
+    )
+    parser.add_argument(
+        "--harness-protocol",
+        choices=HARNESS_PROTOCOLS,
+        default=HARNESS_PROTOCOL_V1,
+        help="policy-facing MCP contract; v1 remains the frozen reproduction baseline",
     )
     parser.add_argument(
         "--improvement-wishes",

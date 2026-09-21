@@ -16,12 +16,33 @@ _M4_TOOLS = frozenset(
     {
         "get_task_spec",
         "get_attack_surface",
+        "get_tool_schema",
         "validate_attack_step",
         "apply_attack_step",
         "validate_placement",
         "submit_attack",
     }
 )
+
+
+class SchemaAccessLedger:
+    """Content-free set of schemas disclosed to one policy episode."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._loaded: set[str] = set()
+
+    def record(self, qualified_name: str) -> None:
+        with self._lock:
+            self._loaded.add(qualified_name)
+
+    def contains(self, qualified_name: str) -> bool:
+        with self._lock:
+            return qualified_name in self._loaded
+
+    def summary(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(sorted(self._loaded))
 
 
 class McpCallLedger:
@@ -81,6 +102,7 @@ class EpisodeAuthority:
     policy_contract: Any = None
     placement_coordinator: Any = None
     mcp_calls: McpCallLedger = field(default_factory=McpCallLedger)
+    schema_access: SchemaAccessLedger = field(default_factory=SchemaAccessLedger)
 
 
 class EpisodeAuthorityRegistry:

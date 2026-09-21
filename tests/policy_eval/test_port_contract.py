@@ -153,6 +153,23 @@ def test_latest_holdout_prompt_is_byte_frozen():
     assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == "aa928d060212afe3ae792049db55eca0a374885f72c47db40452ea48ef25504f"
 
 
+def test_lazy_schema_v2_prompt_is_separate_from_frozen_control():
+    from dt_arena.policy_eval.feedback import FeedbackMode
+    from dt_arena.policy_eval.planning.current import build_policy_prompt
+
+    prompt = build_policy_prompt(
+        placement_enabled=True,
+        max_submissions=2,
+        feedback_mode=FeedbackMode.FINAL_DETERMINISTIC,
+        harness_protocol="lazy-schema-v2",
+    )
+
+    assert "seven DTAP MCP tools" in prompt
+    assert "get_tool_schema" in prompt
+    assert "does not return tool input schemas" in prompt
+    assert "Prompt and skill steps do not require" in prompt
+
+
 def test_initial_prompt_encodes_adaptive_surface_constraints_without_a_detector():
     from dt_arena.policy_eval.feedback import FeedbackMode
     from dt_arena.policy_eval.planning.current import build_policy_prompt
