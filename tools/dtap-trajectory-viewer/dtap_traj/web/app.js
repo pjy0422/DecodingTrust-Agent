@@ -25,6 +25,12 @@ const state = {
 };
 const $ = (s, root=document) => root.querySelector(s);
 const esc = (v='') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+let lastAutoRunStamp=0;
+function nextAutoRunName(){
+  const stamp=Math.max(Date.now(),lastAutoRunStamp+1);lastAutoRunStamp=stamp;
+  return `viewer-e2e-${new Date(stamp).toISOString().replace(/[:.]/g,'-')}`;
+}
+function isAutoRunName(value){return /^viewer-e2e-\d{4}-\d{2}-\d{2}T/.test(value);}
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -47,7 +53,7 @@ async function loadExperimentWorkspace(){
 async function loadExperimentTemplate(name){
   const exp=state.experiments;const data=await experimentApi(`/api/experiments/templates/${encodeURIComponent(name)}`);
   exp.template=data.name;exp.yaml=data.yaml;exp.validation=null;exp.selectedTasks.clear();
-  if(!exp.runName)exp.runName=`viewer-e2e-${new Date().toISOString().replace(/[:.]/g,'-')}`;
+  if(!exp.runName)exp.runName=nextAutoRunName();
 }
 async function validateExperiment(){
   const exp=state.experiments;exp.message='Validating…';render();
@@ -71,10 +77,13 @@ async function syncDatasetSelection(){
 }
 async function launchExperiment(){
   const exp=state.experiments;
+  const automaticName=isAutoRunName(exp.runName);
+  if(automaticName)exp.runName=nextAutoRunName();
+  const submittedRunName=exp.runName;
   const scope=exp.selectedTasks.size?`${exp.selectedTasks.size} selected tasks in waves of up to ${exp.maxParallel}`:'the template profile matrix';
   if(!window.confirm(`Launch ${exp.runName} with ${scope}? This consumes provider/API resources.`))return;
   exp.message='Submitting experiment…';render();
-  try{const payload={yaml:exp.yaml,run_name:exp.runName,tasks:[...exp.selectedTasks]};const checked=await experimentApi('/api/experiments/validate',{method:'POST',body:JSON.stringify(payload)});exp.yaml=checked.normalized_yaml;payload.yaml=exp.yaml;const job=await experimentApi('/api/experiments/launch',{method:'POST',body:JSON.stringify(payload)});exp.selectedJob=job.job_id;exp.message=`Submitted ${job.job_id}`;await refreshExperimentJobs();}
+  try{const payload={yaml:exp.yaml,run_name:submittedRunName,tasks:[...exp.selectedTasks]};const checked=await experimentApi('/api/experiments/validate',{method:'POST',body:JSON.stringify(payload)});exp.yaml=checked.normalized_yaml;payload.yaml=exp.yaml;const job=await experimentApi('/api/experiments/launch',{method:'POST',body:JSON.stringify(payload)});exp.selectedJob=job.job_id;exp.message=`Submitted ${job.run_name||submittedRunName} (${job.job_id})`;if(automaticName)exp.runName=nextAutoRunName();await refreshExperimentJobs();}
   catch(error){exp.message=error.message;}render();
 }
 async function refreshExperimentJobs(){

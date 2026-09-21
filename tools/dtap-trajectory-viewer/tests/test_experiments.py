@@ -251,3 +251,36 @@ def test_existing_artifact_requires_resume(manager: ExperimentManager, monkeypat
     (manager.artifact_root / "existing").mkdir(parents=True)
     with pytest.raises(ExperimentLaunchError, match="already exists"):
         manager.launch(manager.template("baseline.yaml")["yaml"], "existing")
+
+
+def test_existing_automatic_run_name_is_replaced(manager: ExperimentManager, monkeypatch):
+    stale_name = "viewer-e2e-2026-09-21T08-16-32-778Z"
+    (manager.artifact_root / stale_name).mkdir(parents=True)
+
+    class Process:
+        pid = 4321
+
+    monkeypatch.setattr("dtap_traj.experiments.subprocess.Popen", lambda *args, **kwargs: Process())
+    job = manager.launch(manager.template("baseline.yaml")["yaml"], stale_name)
+
+    assert job["run_name"].startswith("viewer-e2e-")
+    assert job["run_name"] != stale_name
+    assert job["artifact_path"] == str(manager.artifact_root / job["run_name"])
+    saved_config = yaml.safe_load(Path(job["config_path"]).read_text(encoding="utf-8"))
+    assert saved_config["paths"]["artifacts_root"] == job["artifact_path"]
+
+
+def test_automatic_run_name_reserved_by_job_is_replaced(manager: ExperimentManager, monkeypatch):
+    stale_name = "viewer-e2e-2026-09-21T08-16-32-778Z"
+    job_dir = manager.jobs_dir / "existing-job"
+    job_dir.mkdir()
+    (job_dir / "job.json").write_text(
+        json.dumps({"run_name": stale_name}), encoding="utf-8"
+    )
+
+    class Process:
+        pid = 4321
+
+    monkeypatch.setattr("dtap_traj.experiments.subprocess.Popen", lambda *args, **kwargs: Process())
+    job = manager.launch(manager.template("baseline.yaml")["yaml"], stale_name)
+    assert job["run_name"] != stale_name

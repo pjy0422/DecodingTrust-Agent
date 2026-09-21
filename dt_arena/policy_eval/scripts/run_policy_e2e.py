@@ -681,7 +681,7 @@ def main() -> None:
     parser.add_argument(
         "--digestor-max-tokens",
         type=int,
-        default=2_500,
+        default=50_000,
         help="provider output budget for each digestor request",
     )
     parser.add_argument(

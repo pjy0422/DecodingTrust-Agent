@@ -136,14 +136,27 @@ class StepAttribution:
 
 
 @dataclass(frozen=True)
+class ToolAssessment:
+    """Digestor analysis tied to one exact victim-side tool call."""
+
+    call_index: int
+    tool: str
+    summary: str
+    injection_handling: Literal[
+        "followed", "partially_followed", "rejected", "ignored", "not_observed", "unclear"
+    ]
+
+
+@dataclass(frozen=True)
 class RepairDigest:
     diagnosis: str
     preserve: tuple[str, ...]
     reconsider: tuple[str, ...]
-    confidence: DigestConfidence
-    payload_effect: DigestEffect = "unclear"
+    confidence: DigestConfidence | None = None
+    payload_effect: DigestEffect | None = None
     evidence_refs: tuple[str, ...] = ()
     step_attributions: tuple[StepAttribution, ...] = ()
+    tool_assessments: tuple[ToolAssessment, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -194,68 +207,75 @@ def _compact_target_state(item: Mapping[str, Any]) -> str:
 
 
 def compact_feedback_v4(full: Mapping[str, Any]) -> dict[str, Any]:
-    """Project detailed sanitized v3 evidence into the compact policy DTO."""
+    """Project detailed evidence into a signal-only policy DTO.
+
+    The retained artifact remains versioned.  The policy projection deliberately
+    has no schema bookkeeping and omits unknown, inapplicable, empty, and weak
+    semantic fields.
+    """
 
     deterministic = full.get("deterministic")
     deterministic = deterministic if isinstance(deterministic, Mapping) else {}
     digest = full.get("digest")
     digest = digest if isinstance(digest, Mapping) else {}
-    attributions = digest.get("step_attributions", ())
-    attribution_by_step = {
-        item.get("step_index"): item
-        for item in attributions
-        if isinstance(item, Mapping) and isinstance(item.get("step_index"), int)
-    }
     steps = []
     for raw in deterministic.get("injections", ()):
         if not isinstance(raw, Mapping):
             continue
-        item: dict[str, Any] = {
-            "step_index": raw.get("step_index"),
-            "injection_type": raw.get("injection_type"),
-            "target_state": _compact_target_state(raw),
-        }
-        for source, target in (
-            ("matched_tool", "matched_tool"),
-            ("evidence_call_indices", "call_indices"),
-            ("unknown_reasons", "unknown_reasons"),
-        ):
+        item: dict[str, Any] = {"step_index": raw.get("step_index")}
+        target_state = _compact_target_state(raw)
+        if target_state not in {"unknown", "not_applicable"}:
+            item["target_state"] = target_state
+        for source, target in (("matched_tool", "matched_tool"), ("evidence_call_indices", "call_indices")):
             value = raw.get(source)
             if value not in (None, (), []):
                 item[target] = value
-        if raw.get("response_match_state") != "not_applicable":
-            item["response_match"] = raw.get("response_match_state", "unknown")
-        if raw.get("presentation_state") != "not_applicable":
-            item["presentation"] = raw.get("presentation_state", "unknown")
-        attribution = attribution_by_step.get(raw.get("step_index"))
-        if attribution is not None:
-            item.update(
-                {
-                    "effect": attribution.get("effect"),
-                    "reason_classes": attribution.get("reason_classes"),
-                    "confidence": attribution.get("confidence"),
-                }
-            )
-        steps.append(item)
+        response_match = raw.get("response_match_state")
+        if response_match in {"matched", "not_matched"} and (
+            response_match == "matched" or target_state not in {"unknown", "not_applicable"}
+        ):
+            item["response_match"] = response_match
+        if set(item) != {"step_index"}:
+            steps.append(item)
     result: dict[str, Any] = {
-        "schema_version": 4,
         "final_response": full.get("final_response", ""),
-        "trace_complete": bool(deterministic.get("trace_complete", False)),
         "tool_sequence": [
             {"tool": item.get("tool"), "status": item.get("status")}
             for item in deterministic.get("tool_sequence", ())
             if isinstance(item, Mapping)
         ],
-        "steps": steps,
     }
+    if steps:
+        result["steps"] = steps
+    if deterministic and not deterministic.get("trace_complete", False):
+        result["trace_incomplete"] = True
     if digest:
-        result["guidance"] = {
-            "diagnosis": digest.get("diagnosis"),
-            "overall_effect": digest.get("payload_effect"),
-            "confidence": digest.get("confidence"),
-            "preserve": digest.get("preserve", ()),
-            "reconsider": digest.get("reconsider", ()),
-        }
+        diagnosis = digest.get("diagnosis")
+        if isinstance(diagnosis, str) and diagnosis.strip():
+            guidance: dict[str, Any] = {"diagnosis": diagnosis}
+            if digest.get("preserve"):
+                guidance["preserve"] = digest["preserve"]
+            if digest.get("reconsider"):
+                guidance["reconsider"] = digest["reconsider"]
+            result["guidance"] = guidance
+        tool_analysis = []
+        for raw in digest.get("tool_assessments", ()):
+            if not isinstance(raw, Mapping):
+                continue
+            summary = raw.get("summary")
+            if not isinstance(summary, str) or not summary.strip():
+                continue
+            item = {
+                "call_index": raw.get("call_index"),
+                "tool": raw.get("tool"),
+                "summary": summary,
+            }
+            handling = raw.get("injection_handling")
+            if handling not in {None, "not_observed", "unclear"}:
+                item["injection_handling"] = handling
+            tool_analysis.append(item)
+        if tool_analysis:
+            result["tool_analysis"] = tool_analysis
     reasoning = full.get("reasoning_summary")
     if (
         isinstance(reasoning, Mapping)

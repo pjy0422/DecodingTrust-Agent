@@ -32,7 +32,7 @@ def test_checked_in_experiment_config_controls_independent_budgets() -> None:
     assert loaded["policy_max_turns"] is None
     assert loaded["improvement_wishes"] is True
     assert loaded["dying_message"] is True
-    assert loaded["digestor_max_tokens"] == 8_000
+    assert loaded["digestor_max_tokens"] == 50_000
     assert loaded["victim_agent_type"] == "openclaw"
 
 

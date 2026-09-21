@@ -39,7 +39,7 @@ placement:
 feedback:
   mode: final+deterministic+digestor
   digestor_model: deepseek-v4.1-flash
-  digestor_max_tokens: 8000
+  digestor_max_tokens: 50000
   digestor_timeout_seconds: 120
   reasoning_summary: false
 

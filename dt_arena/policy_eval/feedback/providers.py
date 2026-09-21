@@ -5,11 +5,44 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
 from .schema import VictimVisibleTrace
+
+
+class DigestorProviderError(ValueError):
+    """Sanitized provider failure suitable for researcher-only diagnostics."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def _decode_json_object(text: str, *, truncated: bool = False) -> dict[str, Any]:
+    """Decode one object while tolerating markdown fences or short preambles."""
+
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        first_newline = stripped.find("\n")
+        if first_newline >= 0:
+            stripped = stripped[first_newline + 1 :]
+        if stripped.endswith("```"):
+            stripped = stripped[:-3].rstrip()
+    decoder = json.JSONDecoder()
+    for offset, character in enumerate(stripped):
+        if character != "{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(stripped, offset)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    code = "truncated_response" if truncated else "invalid_json_response"
+    raise DigestorProviderError(code)
 
 
 @dataclass
@@ -46,7 +79,7 @@ class AnthropicMessagesJSONCompleter:
         api_key: str,
         model: str,
         timeout_seconds: float = 30.0,
-        max_tokens: int = 2_500,
+        max_tokens: int = 50_000,
     ) -> None:
         if not base_url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
             raise ValueError("digestor base URL must be HTTPS or loopback HTTP")
@@ -81,26 +114,30 @@ class AnthropicMessagesJSONCompleter:
             },
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-            payload = json.loads(response.read())
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                payload = json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            raise DigestorProviderError("http_error") from exc
+        except (TimeoutError, urllib.error.URLError) as exc:
+            raise DigestorProviderError("transport_error") from exc
+        except (json.JSONDecodeError, UnicodeError) as exc:
+            raise DigestorProviderError("invalid_envelope") from exc
         usage = payload.get("usage", {}) if isinstance(payload, dict) else {}
         if isinstance(usage, dict):
             self.usage.input_tokens += int(usage.get("input_tokens") or 0)
             self.usage.output_tokens += int(usage.get("output_tokens") or 0)
         content = payload.get("content") if isinstance(payload, dict) else None
         if not isinstance(content, list):
-            raise ValueError("digestor response has no content")
+            raise DigestorProviderError("missing_content")
         text = "".join(
             item.get("text", "") for item in content if isinstance(item, dict) and isinstance(item.get("text"), str)
         ).strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[-1]
-            if text.endswith("```"):
-                text = text[:-3]
-        value = json.loads(text.strip())
-        if not isinstance(value, dict):
-            raise ValueError("digestor completion must be a JSON object")
-        return value
+        stop_reason = payload.get("stop_reason") if isinstance(payload, dict) else None
+        return _decode_json_object(
+            text,
+            truncated=stop_reason in {"max_tokens", "length", "max_output_tokens"},
+        )
 
     async def __call__(self, prompt: str) -> Any:
         self.usage.calls += 1
