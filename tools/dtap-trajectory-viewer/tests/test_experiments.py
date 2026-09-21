@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 import yaml
-from dtap_traj.experiments import ExperimentLaunchError, ExperimentManager
+from dtap_traj.experiments import (
+    ExperimentLaunchError,
+    ExperimentManager,
+    discover_dataset_tasks,
+)
 from dtap_traj.server import create_app
 from fastapi.testclient import TestClient
 
@@ -105,9 +109,61 @@ def test_rejects_path_like_run_name_and_web_budget_overflow(manager: ExperimentM
     with pytest.raises(ExperimentLaunchError, match="run_name"):
         manager.validate(manager.template("baseline.yaml")["yaml"], "../escape")
     document = yaml.safe_load(manager.template("baseline.yaml")["yaml"])
-    document["execution"]["max_parallel"] = 25
+    document["execution"]["max_parallel"] = 17
     with pytest.raises(ExperimentLaunchError, match="max_parallel"):
         manager.validate(yaml.safe_dump(document), "too-parallel")
+
+
+def test_dataset_catalog_and_exact_multi_selection(manager: ExperimentManager):
+    catalog = manager.datasets()
+    selected_items = catalog["items"][:2]
+    selected = [item["path"] for item in selected_items]
+
+    result = manager.validate(
+        manager.template("baseline.yaml")["yaml"],
+        "selected-run",
+        selected,
+    )
+    normalized = yaml.safe_load(result["normalized_yaml"])
+
+    assert catalog["total"] > 2
+    assert catalog["max_parallel"] == 16
+    assert normalized["selection"]["tasks"] == selected
+    assert normalized["selection"]["domains"] == sorted(
+        {item["domain"] for item in selected_items}
+    )
+    assert normalized["execution"]["max_parallel"] == 16
+    assert result["resolved"]["selected_tasks"] == selected
+
+    cleared = manager.validate(result["normalized_yaml"], "cleared-run", [])
+    assert "tasks" not in yaml.safe_load(cleared["normalized_yaml"])["selection"]
+    assert cleared["resolved"]["selected_tasks"] == []
+
+    with pytest.raises(ExperimentLaunchError, match="unknown or non-runnable"):
+        manager.validate(
+            manager.template("baseline.yaml")["yaml"],
+            "unknown-task",
+            ["finance/malicious/indirect/not-real/999999"],
+        )
+
+
+def test_dataset_discovery_uses_only_canonical_malicious_shape(tmp_path: Path):
+    valid = tmp_path / "dataset/finance/malicious/indirect/action_reversal/2/config.yaml"
+    valid.parent.mkdir(parents=True)
+    valid.write_text("Task: {}\n", encoding="utf-8")
+    benign = tmp_path / "dataset/finance/benign/example/1/config.yaml"
+    benign.parent.mkdir(parents=True)
+    benign.write_text("Task: {}\n", encoding="utf-8")
+
+    assert discover_dataset_tasks(tmp_path) == [
+        {
+            "path": "finance/malicious/indirect/action_reversal/2",
+            "domain": "finance",
+            "threat_model": "indirect",
+            "risk_category": "action_reversal",
+            "task_id": "2",
+        }
+    ]
 
 
 def test_api_requires_token_and_launches_worker(monkeypatch, tmp_path: Path):
@@ -137,6 +193,9 @@ def test_api_requires_token_and_launches_worker(monkeypatch, tmp_path: Path):
     client = TestClient(app)
     assert client.get("/api/experiments/templates").status_code == 401
     headers = {"X-DTAP-Launch-Token": "test-secret"}
+    datasets = client.get("/api/experiments/datasets", headers=headers).json()
+    assert datasets["total"] > 0
+    assert datasets["max_parallel"] == 16
     template = client.get("/api/experiments/templates/baseline.yaml", headers=headers).json()
     response = client.post(
         "/api/experiments/launch",

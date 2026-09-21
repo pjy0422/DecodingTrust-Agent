@@ -65,6 +65,23 @@ def _string_list(value: Any, path: str) -> list[str]:
     return result
 
 
+def _dataset_task_list(value: Any, path: str) -> list[str]:
+    result = _string_list(value, path)
+    for item in result:
+        parts = item.split("/")
+        if (
+            len(parts) != 5
+            or parts[1] != "malicious"
+            or any(not part or part in {".", ".."} for part in parts)
+            or "\\" in item
+        ):
+            raise ExperimentConfigError(
+                f"{path} entries must match "
+                "<domain>/malicious/<threat_model>/<risk_category>/<task_id>"
+            )
+    return result
+
+
 def _boolean(value: Any, path: str) -> bool:
     if not isinstance(value, bool):
         raise ExperimentConfigError(f"{path} must be true or false")
@@ -117,7 +134,7 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
         raise ExperimentConfigError(f"schema must be {SCHEMA!r}")
 
     paths = _section(root, "paths", {"dtap_root", "artifacts_root", "python"})
-    selection = _section(root, "selection", {"domains", "threat_models", "profile"})
+    selection = _section(root, "selection", {"domains", "threat_models", "profile", "tasks"})
     models = _section(root, "models", {"policy", "victim"})
     policy = _section(
         root,
@@ -167,6 +184,11 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
             _required(selection, "threat_models", "selection"), "selection.threat_models"
         ),
         "selection_profile": _string(selection.get("profile", "release-v1"), "selection.profile"),
+        "selected_tasks": (
+            _dataset_task_list(selection["tasks"], "selection.tasks")
+            if "tasks" in selection
+            else []
+        ),
         "policy_model": _string(_required(models, "policy", "models"), "models.policy"),
         "victim_model": _string(_required(models, "victim", "models"), "models.victim"),
         "planning_strategy": _string(
@@ -225,6 +247,11 @@ def resolved_experiment_document(args: Any) -> dict[str, Any]:
             "domains": list(args.domains),
             "threat_models": list(args.threat_models),
             "profile": args.selection_profile,
+            **(
+                {"tasks": list(args.selected_tasks)}
+                if getattr(args, "selected_tasks", ())
+                else {}
+            ),
         },
         "models": {"policy": args.policy_model, "victim": args.victim_model},
         "policy": {

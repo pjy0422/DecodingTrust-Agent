@@ -18,6 +18,8 @@ const state = {
   experiments: {
     token: sessionStorage.getItem('dtap-launch-token')||'', templates: [], template: '',
     yaml: '', runName: '', jobs: [], selectedJob: null, validation: null, message: '', loading: false,
+    datasets: [], selectedTasks: new Set(), maxParallel: 16, datasetQuery: '',
+    datasetFocus: {domain:'',threat_model:'',risk_category:''},
   },
 };
 const $ = (s, root=document) => root.querySelector(s);
@@ -35,26 +37,28 @@ async function experimentApi(path,opts={}){
 async function loadExperimentWorkspace(){
   const exp=state.experiments;exp.loading=true;exp.message='';render();
   try{
-    const [templates,jobs]=await Promise.all([experimentApi('/api/experiments/templates'),experimentApi('/api/experiments/jobs')]);
-    exp.templates=templates.items||[];exp.jobs=jobs.items||[];
+    const [templates,jobs,datasets]=await Promise.all([experimentApi('/api/experiments/templates'),experimentApi('/api/experiments/jobs'),experimentApi('/api/experiments/datasets')]);
+    exp.templates=templates.items||[];exp.jobs=jobs.items||[];exp.datasets=datasets.items||[];exp.maxParallel=datasets.max_parallel||16;
+    initializeDatasetFocus();
     if(!exp.template&&exp.templates.length){exp.template=exp.templates[0].name;await loadExperimentTemplate(exp.template);}
   }catch(error){exp.message=error.message;}finally{exp.loading=false;render();}
 }
 async function loadExperimentTemplate(name){
   const exp=state.experiments;const data=await experimentApi(`/api/experiments/templates/${encodeURIComponent(name)}`);
-  exp.template=data.name;exp.yaml=data.yaml;exp.validation=null;
+  exp.template=data.name;exp.yaml=data.yaml;exp.validation=null;exp.selectedTasks.clear();
   if(!exp.runName)exp.runName=`viewer-e2e-${new Date().toISOString().replace(/[:.]/g,'-')}`;
 }
 async function validateExperiment(){
   const exp=state.experiments;exp.message='Validating…';render();
-  try{exp.validation=await experimentApi('/api/experiments/validate',{method:'POST',body:JSON.stringify({yaml:exp.yaml,run_name:exp.runName})});exp.yaml=exp.validation.normalized_yaml;exp.message='Configuration is valid. Server-managed paths were normalized.';}
+  try{const payload={yaml:exp.yaml,run_name:exp.runName,tasks:[...exp.selectedTasks]};exp.validation=await experimentApi('/api/experiments/validate',{method:'POST',body:JSON.stringify(payload)});exp.yaml=exp.validation.normalized_yaml;exp.message=`Configuration is valid. ${exp.selectedTasks.size?`${exp.selectedTasks.size} exact tasks will run with up to ${exp.maxParallel} workers.`:'YAML profile selection will be used.'}`;}
   catch(error){exp.validation=null;exp.message=error.message;}render();
 }
 async function launchExperiment(){
   const exp=state.experiments;
-  if(!window.confirm(`Launch ${exp.runName}? This consumes provider/API resources.`))return;
+  const scope=exp.selectedTasks.size?`${exp.selectedTasks.size} selected tasks in waves of up to ${exp.maxParallel}`:'the template profile matrix';
+  if(!window.confirm(`Launch ${exp.runName} with ${scope}? This consumes provider/API resources.`))return;
   exp.message='Submitting experiment…';render();
-  try{const job=await experimentApi('/api/experiments/launch',{method:'POST',body:JSON.stringify({yaml:exp.yaml,run_name:exp.runName})});exp.selectedJob=job.job_id;exp.message=`Submitted ${job.job_id}`;await refreshExperimentJobs();}
+  try{const payload={yaml:exp.yaml,run_name:exp.runName,tasks:[...exp.selectedTasks]};const checked=await experimentApi('/api/experiments/validate',{method:'POST',body:JSON.stringify(payload)});exp.yaml=checked.normalized_yaml;payload.yaml=exp.yaml;const job=await experimentApi('/api/experiments/launch',{method:'POST',body:JSON.stringify(payload)});exp.selectedJob=job.job_id;exp.message=`Submitted ${job.job_id}`;await refreshExperimentJobs();}
   catch(error){exp.message=error.message;}render();
 }
 async function refreshExperimentJobs(){
@@ -378,6 +382,42 @@ function comparisonHtml(comparison){
   const rows=keys.map(key=>`<tr><th>${esc(key)}</th>${trials.map(trial=>`<td>${esc(JSON.stringify(trial.config[key]))}</td>`).join('')}</tr>`).join('');
   return `<section class="tuning-card comparison"><h3>Selected config comparison</h3><div class="table-scroll"><table><thead><tr><th>Varying setting</th>${trials.map(trial=>`<th>${esc(trial.trial_id)}</th>`).join('')}</tr></thead><tbody>${rows||'<tr><td colspan="9">Selected configs are identical.</td></tr>'}</tbody></table></div></section>`;
 }
+
+function datasetValues(field,filters={}){
+  const exp=state.experiments;
+  return [...new Set(exp.datasets.filter(item=>Object.entries(filters).every(([key,value])=>!value||item[key]===value)).map(item=>item[field]))].sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'}));
+}
+function initializeDatasetFocus(){
+  const exp=state.experiments;const focus=exp.datasetFocus;
+  const domains=datasetValues('domain');if(!domains.includes(focus.domain))focus.domain=domains[0]||'';
+  const threats=datasetValues('threat_model',{domain:focus.domain});if(!threats.includes(focus.threat_model))focus.threat_model=threats[0]||'';
+  const risks=datasetValues('risk_category',{domain:focus.domain,threat_model:focus.threat_model});if(!risks.includes(focus.risk_category))focus.risk_category=risks[0]||'';
+}
+function datasetScopeItems(filters){return state.experiments.datasets.filter(item=>Object.entries(filters).every(([key,value])=>!value||item[key]===value));}
+function datasetScopeButton(field,value,filters,active){
+  const items=datasetScopeItems({...filters,[field]:value});const selected=items.filter(item=>state.experiments.selectedTasks.has(item.path)).length;
+  return `<button type="button" class="dataset-node ${active?'active':''}" data-dataset-level="${esc(field)}" data-dataset-value="${esc(value)}"><span>${esc(value)}</span><small>${selected}/${items.length}</small></button>`;
+}
+function datasetPicker(){
+  const exp=state.experiments;const focus=exp.datasetFocus;
+  const domains=datasetValues('domain');
+  const threats=datasetValues('threat_model',{domain:focus.domain});
+  const risks=datasetValues('risk_category',{domain:focus.domain,threat_model:focus.threat_model});
+  const query=exp.datasetQuery.trim().toLowerCase();
+  const tasks=datasetScopeItems({domain:focus.domain,threat_model:focus.threat_model,risk_category:focus.risk_category}).filter(item=>!query||item.task_id.toLowerCase().includes(query)||item.path.toLowerCase().includes(query));
+  const visibleSelected=tasks.filter(item=>exp.selectedTasks.has(item.path)).length;
+  const selected=[...exp.selectedTasks];const waves=Math.ceil(selected.length/exp.maxParallel);
+  const selectedPreview=selected.slice(0,40).map(path=>`<button type="button" class="selected-task" data-remove-task="${esc(path)}" title="Remove ${esc(path)}">${esc(path)} <b>×</b></button>`).join('');
+  return `<section class="dataset-picker"><div class="dataset-picker-head"><div><h2>Dataset tasks</h2><p>dataset/&lt;domain&gt;/malicious/&lt;threat_model&gt;/&lt;risk_category&gt;/&lt;task_id&gt;</p></div><div class="dataset-count"><b>${selected.length}</b> selected · max_parallel ${exp.maxParallel}${selected.length?` · ${waves} wave${waves===1?'':'s'}`:''}</div></div>
+    <div class="dataset-browser">
+      <div class="dataset-column"><h3>Domain</h3><div>${domains.map(value=>datasetScopeButton('domain',value,{},value===focus.domain)).join('')}</div></div>
+      <div class="dataset-column"><h3>Threat model</h3><div>${threats.map(value=>datasetScopeButton('threat_model',value,{domain:focus.domain},value===focus.threat_model)).join('')}</div></div>
+      <div class="dataset-column risk-column"><h3>Risk category</h3><div>${risks.map(value=>datasetScopeButton('risk_category',value,{domain:focus.domain,threat_model:focus.threat_model},value===focus.risk_category)).join('')}</div></div>
+      <div class="dataset-column task-column"><div class="task-column-head"><h3>Task IDs</h3><span>${visibleSelected}/${tasks.length}</span></div><input id="datasetTaskSearch" value="${esc(exp.datasetQuery)}" placeholder="Filter task id or path"><div class="task-actions"><button type="button" id="selectVisibleTasks">Select visible</button><button type="button" id="clearVisibleTasks">Clear visible</button></div><div class="task-checks">${tasks.map(item=>`<label title="${esc(item.path)}"><input type="checkbox" data-dataset-task="${esc(item.path)}" ${exp.selectedTasks.has(item.path)?'checked':''}><span>${esc(item.task_id)}</span></label>`).join('')||'<div class="empty compact">No matching tasks</div>'}</div></div>
+    </div>
+    <div class="selected-task-list">${selectedPreview||'<span>No explicit tasks selected. The template profile matrix will run.</span>'}${selected.length>40?`<span>+ ${selected.length-40} more</span>`:''}</div>
+  </section>`;
+}
 function renderTuningDetail(){
   const viewer=$('#tuningViewer');const trial=state.tuning.selected;if(!viewer||!trial)return;
   const detail=state.tuning.detail.get(trial.trial_id);
@@ -390,7 +430,7 @@ function experimentWorkspace(){
   const templateOptions=exp.templates.map(item=>`<option value="${esc(item.name)}" ${item.name===exp.template?'selected':''}>${esc(item.name)}</option>`).join('');
   const jobs=exp.jobs.map(job=>`<button class="job-row ${job.job_id===exp.selectedJob?'active':''}" data-job="${esc(job.job_id)}"><span><b>${esc(job.run_name)}</b><small>${esc(job.job_id)}</small></span><i class="job-status ${esc(job.status)}">${esc(job.status)}</i></button>`).join('')||'<div class="empty compact">No viewer-submitted jobs yet.</div>';
   const detail=exp.jobDetail;
-  return `<main class="experiment-workspace"><section class="launcher-card editor-card"><div class="launcher-title"><div><h1>Run policy evaluation</h1><p>Edit a strict experiment-v1 YAML. Credentials and runtime paths stay server-managed.</p></div><button id="lockLauncher">Lock</button></div><div class="launcher-fields"><label>Template<select id="experimentTemplate">${templateOptions}</select></label><label>Run name<input id="experimentRunName" value="${esc(exp.runName)}" maxlength="80"></label></div><label>config.yaml<textarea id="experimentYaml" spellcheck="false">${esc(exp.yaml)}</textarea></label><div class="launcher-actions"><button id="validateExperiment">Validate + normalize</button><button id="launchExperiment" class="primary">Run E2E</button></div><div class="launcher-message">${esc(exp.message||'Changes are not submitted until Run E2E is confirmed.')}</div>${exp.validation?`<details><summary>Resolved configuration</summary><pre>${esc(JSON.stringify(exp.validation.resolved,null,2))}</pre></details>`:''}</section><section class="launcher-card jobs-card"><div class="launcher-title"><div><h2>Experiment jobs</h2><p>Jobs survive viewer restarts; completed artifacts appear automatically in Trajectories.</p></div><button id="refreshJobs">Refresh</button></div><div class="job-list">${jobs}</div>${detail?`<div class="job-detail"><h3>${esc(detail.run_name)} · ${esc(detail.status)}</h3><p>${esc(detail.artifact_path)}</p><pre>${esc(detail.log_tail||'Waiting for runner output…')}</pre></div>`:''}</section></main>`;
+  return `<main class="experiment-workspace"><div class="experiment-primary">${datasetPicker()}<section class="launcher-card editor-card"><div class="launcher-title"><div><h1>Run policy evaluation</h1><p>Edit a strict experiment-v1 YAML. Click-selected tasks override the profile matrix and are written into the normalized config.</p></div><button id="lockLauncher">Lock</button></div><div class="launcher-fields"><label>Template<select id="experimentTemplate">${templateOptions}</select></label><label>Run name<input id="experimentRunName" value="${esc(exp.runName)}" maxlength="80"></label></div><label>config.yaml<textarea id="experimentYaml" spellcheck="false">${esc(exp.yaml)}</textarea></label><div class="launcher-actions"><button id="validateExperiment">Validate + normalize</button><button id="launchExperiment" class="primary">Run E2E</button></div><div class="launcher-message">${esc(exp.message||'Changes are not submitted until Run E2E is confirmed.')}</div>${exp.validation?`<details><summary>Resolved configuration</summary><pre>${esc(JSON.stringify(exp.validation.resolved,null,2))}</pre></details>`:''}</section></div><section class="launcher-card jobs-card"><div class="launcher-title"><div><h2>Experiment jobs</h2><p>Jobs survive viewer restarts; completed artifacts appear automatically in Trajectories.</p></div><button id="refreshJobs">Refresh</button></div><div class="job-list">${jobs}</div>${detail?`<div class="job-detail"><h3>${esc(detail.run_name)} · ${esc(detail.status)}</h3><p>${esc(detail.artifact_path)}</p><pre>${esc(detail.log_tail||'Waiting for runner output…')}</pre></div>`:''}</section></main>`;
 }
 function bind(){
   document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>{
@@ -402,6 +442,12 @@ function bind(){
     $('#experimentTemplate')?.addEventListener('change',async event=>{await loadExperimentTemplate(event.target.value);render();});
     $('#experimentRunName')?.addEventListener('input',event=>{state.experiments.runName=event.target.value;});
     $('#experimentYaml')?.addEventListener('input',event=>{state.experiments.yaml=event.target.value;state.experiments.validation=null;});
+    document.querySelectorAll('[data-dataset-level]').forEach(button=>button.addEventListener('click',()=>{const exp=state.experiments;const level=button.dataset.datasetLevel;exp.datasetFocus[level]=button.dataset.datasetValue;if(level==='domain'){exp.datasetFocus.threat_model='';exp.datasetFocus.risk_category='';}else if(level==='threat_model'){exp.datasetFocus.risk_category='';}initializeDatasetFocus();render();}));
+    document.querySelectorAll('[data-dataset-task]').forEach(input=>input.addEventListener('change',()=>{const selected=state.experiments.selectedTasks;if(input.checked)selected.add(input.dataset.datasetTask);else selected.delete(input.dataset.datasetTask);state.experiments.validation=null;render();}));
+    document.querySelectorAll('[data-remove-task]').forEach(button=>button.addEventListener('click',()=>{state.experiments.selectedTasks.delete(button.dataset.removeTask);state.experiments.validation=null;render();}));
+    $('#datasetTaskSearch')?.addEventListener('input',debounce(event=>{state.experiments.datasetQuery=event.target.value;render();},150));
+    $('#selectVisibleTasks')?.addEventListener('click',()=>{document.querySelectorAll('[data-dataset-task]').forEach(input=>state.experiments.selectedTasks.add(input.dataset.datasetTask));state.experiments.validation=null;render();});
+    $('#clearVisibleTasks')?.addEventListener('click',()=>{document.querySelectorAll('[data-dataset-task]').forEach(input=>state.experiments.selectedTasks.delete(input.dataset.datasetTask));state.experiments.validation=null;render();});
     $('#validateExperiment')?.addEventListener('click',validateExperiment);
     $('#launchExperiment')?.addEventListener('click',launchExperiment);
     $('#refreshJobs')?.addEventListener('click',refreshExperimentJobs);

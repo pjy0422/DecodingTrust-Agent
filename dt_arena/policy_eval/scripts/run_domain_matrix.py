@@ -1,4 +1,4 @@
-"""Run one representative policy E2E task per domain and threat model in parallel."""
+"""Run profile-selected or exact dataset policy E2E tasks in parallel."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import shutil
 import signal
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,20 @@ from dt_arena.policy_eval.experiment_config import (
     write_resolved_experiment,
 )
 from dt_arena.policy_eval.security_policy import policy_max_turn_budget
+
+
+MAX_PARALLEL = 16
+
+
+@dataclass(frozen=True)
+class MatrixTask:
+    domain: str
+    threat_model: str
+    risk_category: str
+    task_id: str
+    task_dir: Path
+    benchmark_index: int | None
+    explicit: bool = False
 
 
 def _failure_class(result: dict[str, Any]) -> str | None:
@@ -154,6 +169,66 @@ def _task_dir(dtap_root: Path, record: dict[str, Any]) -> Path:
     )
 
 
+def _explicit_task(dtap_root: Path, relative_path: str) -> MatrixTask:
+    parts = relative_path.split("/")
+    if (
+        len(parts) != 5
+        or parts[1] != "malicious"
+        or any(not part or part in {".", ".."} for part in parts)
+        or "\\" in relative_path
+    ):
+        raise ValueError(
+            "explicit tasks must match "
+            "<domain>/malicious/<threat_model>/<risk_category>/<task_id>"
+        )
+    domain, _, threat_model, risk_category, task_id = parts
+    dataset_root = (dtap_root / "dataset").resolve()
+    task_dir = dataset_root.joinpath(*parts).resolve()
+    try:
+        task_dir.relative_to(dataset_root)
+    except ValueError as exc:
+        raise ValueError(f"explicit task escapes dataset root: {relative_path}") from exc
+    if not (task_dir / "config.yaml").is_file():
+        raise ValueError(f"explicit task has no config.yaml: {relative_path}")
+    return MatrixTask(
+        domain=domain,
+        threat_model=threat_model,
+        risk_category=risk_category,
+        task_id=task_id,
+        task_dir=task_dir,
+        benchmark_index=None,
+        explicit=True,
+    )
+
+
+def _matrix_tasks(args: argparse.Namespace) -> list[MatrixTask]:
+    if args.selected_tasks:
+        return [_explicit_task(args.dtap_root, path) for path in args.selected_tasks]
+    tasks = []
+    for domain, threat_model in matrix_cases(args.domains, args.threat_models):
+        record, benchmark_index = _selected_record(
+            args.dtap_root / "benchmark" / domain / f"{threat_model}.jsonl",
+            args.selection_profile,
+        )
+        tasks.append(
+            MatrixTask(
+                domain=domain,
+                threat_model=threat_model,
+                risk_category=str(record["risk_category"]),
+                task_id=str(record["task_id"]),
+                task_dir=_task_dir(args.dtap_root, record),
+                benchmark_index=benchmark_index,
+            )
+        )
+    return tasks
+
+
+def _case_dir(root: Path, task: MatrixTask) -> Path:
+    if task.explicit:
+        return root / task.domain / task.threat_model / task.risk_category / task.task_id
+    return root / task.domain / task.threat_model
+
+
 def _passed_payload(stdout: str) -> dict[str, Any] | None:
     decoder = json.JSONDecoder()
     matches: list[tuple[int, dict[str, Any]]] = []
@@ -169,10 +244,38 @@ def _passed_payload(stdout: str) -> dict[str, Any] | None:
     return max(matches, key=lambda item: item[0])[1] if matches else None
 
 
-def _stored_results(root: Path) -> list[dict[str, Any]]:
+def _stored_results(root: Path, tasks: list[MatrixTask]) -> list[dict[str, Any]]:
+    if not tasks or not all(task.explicit for task in tasks):
+        # Preserve the profile-matrix resume summary: it includes every valid
+        # domain/threat result already stored under the run root, even when the
+        # current invocation selected only a subset.
+        results: list[dict[str, Any]] = []
+        for domain, threat_model in ALL_CASES:
+            path = root / domain / threat_model / "result.json"
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            except (OSError, ValueError) as exc:
+                value = {"result_error": type(exc).__name__}
+            if (
+                not isinstance(value, dict)
+                or value.get("domain") != domain
+                or value.get("threat_model") != threat_model
+                or value.get("status") not in ("passed", "failed")
+            ):
+                value = {
+                    "domain": domain,
+                    "threat_model": threat_model,
+                    "status": "failed",
+                    "result_error": "invalid stored result",
+                }
+            results.append(value)
+        return results
+
     results: list[dict[str, Any]] = []
-    for domain, threat_model in ALL_CASES:
-        path = root / domain / threat_model / "result.json"
+    for task in tasks:
+        path = _case_dir(root, task) / "result.json"
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -181,13 +284,16 @@ def _stored_results(root: Path) -> list[dict[str, Any]]:
             value = {"result_error": type(exc).__name__}
         if (
             not isinstance(value, dict)
-            or value.get("domain") != domain
-            or value.get("threat_model") != threat_model
+            or value.get("domain") != task.domain
+            or value.get("threat_model") != task.threat_model
+            or value.get("task_id") != task.task_id
             or value.get("status") not in ("passed", "failed")
         ):
             value = {
-                "domain": domain,
-                "threat_model": threat_model,
+                "domain": task.domain,
+                "threat_model": task.threat_model,
+                "risk_category": task.risk_category,
+                "task_id": task.task_id,
                 "status": "failed",
                 "result_error": "invalid stored result",
             }
@@ -204,7 +310,7 @@ def _matching_resume_result(
     path: Path,
     *,
     selection_profile: str,
-    benchmark_index: int,
+    benchmark_index: int | None,
     task_id: str,
     risk_category: str,
 ) -> dict[str, Any] | None:
@@ -230,25 +336,19 @@ def _matching_resume_result(
 async def _run_case(
     args: argparse.Namespace,
     *,
-    domain: str,
-    threat_model: str,
+    task: MatrixTask,
     slot: int,
 ) -> dict[str, Any]:
-    record, benchmark_index = _selected_record(
-        args.dtap_root / "benchmark" / domain / f"{threat_model}.jsonl",
-        args.selection_profile,
-    )
-    task_dir = _task_dir(args.dtap_root, record)
-    case_dir = args.artifacts_root / domain / threat_model
+    case_dir = _case_dir(args.artifacts_root, task)
     case_dir.mkdir(parents=True, exist_ok=True)
     result_path = case_dir / "result.json"
     if args.resume and result_path.exists():
         previous = _matching_resume_result(
             result_path,
-            selection_profile=args.selection_profile,
-            benchmark_index=benchmark_index,
-            task_id=str(record["task_id"]),
-            risk_category=str(record["risk_category"]),
+            selection_profile=("explicit" if task.explicit else args.selection_profile),
+            benchmark_index=task.benchmark_index,
+            task_id=task.task_id,
+            risk_category=task.risk_category,
         )
         if previous is not None:
             return previous
@@ -260,7 +360,7 @@ async def _run_case(
         "-m",
         "dt_arena.policy_eval.scripts.run_policy_e2e",
         "--task-dir",
-        str(task_dir),
+        str(task.task_dir),
         "--dtap-root",
         str(args.dtap_root),
         "--python",
@@ -350,13 +450,14 @@ async def _run_case(
     payload = _passed_payload(stdout)
     result: dict[str, Any] = {
         "status": "passed" if process.returncode == 0 and payload else "failed",
-        "domain": domain,
-        "threat_model": threat_model,
-        "task_dir": str(task_dir),
-        "task_id": str(record["task_id"]),
-        "risk_category": str(record["risk_category"]),
-        "selection_profile": args.selection_profile,
-        "benchmark_index": benchmark_index,
+        "domain": task.domain,
+        "threat_model": task.threat_model,
+        "task_dir": str(task.task_dir),
+        "task_id": task.task_id,
+        "risk_category": task.risk_category,
+        "selection_mode": "explicit" if task.explicit else "profile",
+        "selection_profile": "explicit" if task.explicit else args.selection_profile,
+        "benchmark_index": task.benchmark_index,
         "policy_model": args.policy_model,
         "victim_model": args.victim_model,
         "victim_agent_type": args.victim_agent_type,
@@ -440,25 +541,25 @@ async def _main(args: argparse.Namespace) -> int:
     highest = args.port_range_start + (args.max_parallel - 1) * args.port_range_stride + 511
     if args.port_range_stride < 512 or highest > 65535:
         raise ValueError("parallel workers require disjoint valid 512-port ranges")
+    tasks = _matrix_tasks(args)
     args.artifacts_root.mkdir(parents=True, exist_ok=True)
     write_resolved_experiment(args)
-    queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
-    for case in matrix_cases(args.domains, args.threat_models):
-        queue.put_nowait(case)
+    queue: asyncio.Queue[MatrixTask] = asyncio.Queue()
+    for task in tasks:
+        queue.put_nowait(task)
     results: list[dict[str, Any]] = []
 
     async def worker(slot: int) -> None:
         while not queue.empty():
             try:
-                domain, threat_model = queue.get_nowait()
+                task = queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
             try:
                 results.append(
                     await _run_case(
                         args,
-                        domain=domain,
-                        threat_model=threat_model,
+                        task=task,
                         slot=slot,
                     )
                 )
@@ -466,16 +567,28 @@ async def _main(args: argparse.Namespace) -> int:
                 queue.task_done()
 
     await asyncio.gather(*(worker(slot) for slot in range(args.max_parallel)))
-    results.sort(key=lambda item: (item["domain"], item["threat_model"]))
-    stored = _stored_results(args.artifacts_root)
-    stored.sort(key=lambda item: (item["domain"], item["threat_model"]))
+    def result_key(item: dict[str, Any]) -> tuple[str, str, str, str]:
+        return (
+            item["domain"],
+            item["threat_model"],
+            item.get("risk_category", ""),
+            item.get("task_id", ""),
+        )
+    results.sort(key=result_key)
+    stored = _stored_results(args.artifacts_root, tasks)
+    stored.sort(key=result_key)
+    explicit_selection = bool(args.selected_tasks)
     summary = {
         "benchmark_manifest": {
             "schema_version": BENCHMARK_MANIFEST["schema_version"],
             "sha256": MANIFEST_SHA256,
         },
-        "selection_profile": args.selection_profile,
-        "benchmark_index": SELECTION_PROFILES[args.selection_profile],
+        "selection_mode": "explicit" if explicit_selection else "profile",
+        "selection_profile": "explicit" if explicit_selection else args.selection_profile,
+        "benchmark_index": (
+            None if explicit_selection else SELECTION_PROFILES[args.selection_profile]
+        ),
+        "selected_tasks": list(args.selected_tasks),
         "policy_model": args.policy_model,
         "victim_model": args.victim_model,
         "victim_agent_type": args.victim_agent_type,
@@ -555,6 +668,16 @@ def main() -> None:
         choices=tuple(SELECTION_PROFILES),
         default=config_defaults.get("selection_profile", "release-v1"),
         help="manifest-defined benchmark record selection (holdout-v1 is disjoint)",
+    )
+    parser.add_argument(
+        "--tasks",
+        dest="selected_tasks",
+        nargs="+",
+        default=config_defaults.get("selected_tasks", []),
+        help=(
+            "exact dataset paths relative to dataset/, each shaped as "
+            "<domain>/malicious/<threat_model>/<risk_category>/<task_id>"
+        ),
     )
     parser.add_argument("--max-parallel", type=int, default=config_defaults.get("max_parallel", 2))
     parser.add_argument(
@@ -649,6 +772,10 @@ def main() -> None:
         )
     if args.selection_profile not in SELECTION_PROFILES:
         parser.error(f"invalid configured selection profile: {args.selection_profile}")
+    if len(set(args.selected_tasks)) != len(args.selected_tasks):
+        parser.error("--tasks must not contain duplicates")
+    if args.max_parallel > MAX_PARALLEL:
+        parser.error(f"--max-parallel must be <= {MAX_PARALLEL}")
     for name in (
         "max_parallel",
         "victim_max_turns",

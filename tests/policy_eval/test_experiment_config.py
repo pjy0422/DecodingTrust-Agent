@@ -12,6 +12,7 @@ from dt_arena.policy_eval.experiment_config import (
     load_experiment_config,
     resolved_experiment_document,
 )
+from dt_arena.policy_eval.scripts.run_domain_matrix import _case_dir, _matrix_tasks
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -87,3 +88,50 @@ def test_resolved_document_contains_no_environment_or_credentials() -> None:
     assert "api_key" not in rendered
     assert "auth_token" not in rendered
     assert "environment" not in rendered
+
+
+def test_explicit_dataset_tasks_are_closed_and_retained(tmp_path: Path) -> None:
+    raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["selection"]["tasks"] = [
+        "finance/malicious/indirect/action_reversal/1",
+        "travel/malicious/direct/privacy_violation/2",
+    ]
+    target = tmp_path / "config.yaml"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    loaded = load_experiment_config(target)
+    document = resolved_experiment_document(Namespace(**loaded))
+
+    assert loaded["selected_tasks"] == raw["selection"]["tasks"]
+    assert document["selection"]["tasks"] == raw["selection"]["tasks"]
+
+    raw["selection"]["tasks"] = ["../../outside"]
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ExperimentConfigError, match="entries must match"):
+        load_experiment_config(target)
+
+
+def test_explicit_matrix_tasks_get_distinct_artifact_directories(tmp_path: Path) -> None:
+    paths = [
+        "finance/malicious/indirect/action_reversal/1",
+        "finance/malicious/indirect/action_reversal/2",
+    ]
+    for relative in paths:
+        task = tmp_path / "dataset" / relative
+        task.mkdir(parents=True)
+        (task / "config.yaml").write_text("Task: {}\n", encoding="utf-8")
+    args = Namespace(
+        dtap_root=tmp_path,
+        selected_tasks=paths,
+        domains=["finance"],
+        threat_models=["indirect"],
+        selection_profile="release-v1",
+    )
+
+    tasks = _matrix_tasks(args)
+
+    assert [task.task_id for task in tasks] == ["1", "2"]
+    assert [_case_dir(tmp_path / "artifacts", task) for task in tasks] == [
+        tmp_path / "artifacts/finance/indirect/action_reversal/1",
+        tmp_path / "artifacts/finance/indirect/action_reversal/2",
+    ]

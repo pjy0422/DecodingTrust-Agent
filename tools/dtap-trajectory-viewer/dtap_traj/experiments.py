@@ -18,10 +18,52 @@ import yaml
 
 _RUN_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 _MAX_YAML_BYTES = 128 * 1024
+_VIEWER_MAX_PARALLEL = 16
 
 
 class ExperimentLaunchError(ValueError):
     """The submitted experiment is unsafe or invalid."""
+
+
+def discover_dataset_tasks(runner_root: Path) -> list[dict[str, str]]:
+    """Return runnable malicious tasks using DTAP's canonical directory shape."""
+
+    dataset_root = runner_root.resolve() / "dataset"
+    items: list[dict[str, str]] = []
+    if not dataset_root.is_dir():
+        return items
+    for config in dataset_root.glob("*/malicious/*/*/*/config.yaml"):
+        try:
+            config.resolve().relative_to(dataset_root)
+        except ValueError:
+            continue
+        relative = config.parent.relative_to(dataset_root)
+        if len(relative.parts) != 5:
+            continue
+        domain, malicious, threat_model, risk_category, task_id = relative.parts
+        if malicious != "malicious":
+            continue
+        items.append(
+            {
+                "path": relative.as_posix(),
+                "domain": domain,
+                "threat_model": threat_model,
+                "risk_category": risk_category,
+                "task_id": task_id,
+            }
+        )
+
+    def sort_key(item: dict[str, str]) -> tuple[Any, ...]:
+        task_id = item["task_id"]
+        task_key: tuple[int, Any] = (0, int(task_id)) if task_id.isdigit() else (1, task_id.casefold())
+        return (
+            item["domain"].casefold(),
+            item["threat_model"].casefold(),
+            item["risk_category"].casefold(),
+            task_key,
+        )
+
+    return sorted(items, key=sort_key)
 
 
 def _now() -> str:
@@ -89,7 +131,20 @@ class ExperimentManager:
             raise ExperimentLaunchError("experiment template not found")
         return {"name": path.name, "yaml": path.read_text(encoding="utf-8")}
 
-    def _normalized(self, yaml_text: str, run_name: str) -> tuple[str, dict[str, Any], Path]:
+    def datasets(self) -> dict[str, Any]:
+        items = discover_dataset_tasks(self.runner_root)
+        return {
+            "items": items,
+            "total": len(items),
+            "max_parallel": _VIEWER_MAX_PARALLEL,
+        }
+
+    def _normalized(
+        self,
+        yaml_text: str,
+        run_name: str,
+        selected_tasks: list[str] | None = None,
+    ) -> tuple[str, dict[str, Any], Path]:
         if not _RUN_NAME.fullmatch(run_name):
             raise ExperimentLaunchError(
                 "run_name must be 1-80 letters, digits, dots, underscores, or hyphens"
@@ -102,6 +157,37 @@ class ExperimentManager:
             raise ExperimentLaunchError(f"invalid YAML: {exc}") from exc
         if not isinstance(document, dict):
             raise ExperimentLaunchError("experiment YAML must contain a mapping")
+        if selected_tasks is not None:
+            if not isinstance(selected_tasks, list):
+                raise ExperimentLaunchError("selected dataset tasks must be a list")
+            if not all(isinstance(item, str) for item in selected_tasks):
+                raise ExperimentLaunchError("selected dataset tasks must be strings")
+            if len(set(selected_tasks)) != len(selected_tasks):
+                raise ExperimentLaunchError("selected dataset tasks must not contain duplicates")
+            selection = document.setdefault("selection", {})
+            if not isinstance(selection, dict):
+                raise ExperimentLaunchError("selection must be a mapping")
+            if not selected_tasks:
+                # An explicit empty browser selection must clear tasks written
+                # by an earlier normalization, rather than silently rerunning
+                # a stale exact-task list.
+                selection.pop("tasks", None)
+            else:
+                catalog = {item["path"]: item for item in discover_dataset_tasks(self.runner_root)}
+                unknown = sorted(set(selected_tasks) - set(catalog))
+                if unknown:
+                    raise ExperimentLaunchError(
+                        f"unknown or non-runnable dataset task: {unknown[0]}"
+                    )
+                selection["tasks"] = selected_tasks
+                selection["domains"] = sorted({catalog[path]["domain"] for path in selected_tasks})
+                selection["threat_models"] = sorted(
+                    {catalog[path]["threat_model"] for path in selected_tasks}
+                )
+                execution = document.setdefault("execution", {})
+                if not isinstance(execution, dict):
+                    raise ExperimentLaunchError("execution must be a mapping")
+                execution["max_parallel"] = _VIEWER_MAX_PARALLEL
         paths = document.setdefault("paths", {})
         if not isinstance(paths, dict):
             raise ExperimentLaunchError("paths must be a mapping")
@@ -128,8 +214,19 @@ class ExperimentManager:
                 resolved = module.load_experiment_config(config_path)
             except (ImportError, ValueError) as exc:
                 raise ExperimentLaunchError(str(exc)) from exc
-        if resolved["max_parallel"] > 24:
-            raise ExperimentLaunchError("execution.max_parallel must be <= 24 from the viewer")
+        if resolved["max_parallel"] > _VIEWER_MAX_PARALLEL:
+            raise ExperimentLaunchError(
+                f"execution.max_parallel must be <= {_VIEWER_MAX_PARALLEL} from the viewer"
+            )
+        if resolved["selected_tasks"]:
+            catalog_paths = {
+                item["path"] for item in discover_dataset_tasks(self.runner_root)
+            }
+            unknown = sorted(set(resolved["selected_tasks"]) - catalog_paths)
+            if unknown:
+                raise ExperimentLaunchError(
+                    f"unknown or non-runnable dataset task: {unknown[0]}"
+                )
         if resolved["max_submissions"] > 20:
             raise ExperimentLaunchError("budgets.h_victim_executions must be <= 20 from the viewer")
         if resolved["max_submit_calls"] > 200 or resolved["max_placement_actions"] > 200:
@@ -144,8 +241,13 @@ class ExperimentManager:
         public["artifacts_root"] = str(output)
         return normalized, public, output
 
-    def validate(self, yaml_text: str, run_name: str) -> dict[str, Any]:
-        normalized, resolved, output = self._normalized(yaml_text, run_name)
+    def validate(
+        self,
+        yaml_text: str,
+        run_name: str,
+        selected_tasks: list[str] | None = None,
+    ) -> dict[str, Any]:
+        normalized, resolved, output = self._normalized(yaml_text, run_name, selected_tasks)
         return {
             "valid": True,
             "normalized_yaml": normalized,
@@ -153,8 +255,13 @@ class ExperimentManager:
             "output_exists": output.exists(),
         }
 
-    def launch(self, yaml_text: str, run_name: str) -> dict[str, Any]:
-        normalized, resolved, output = self._normalized(yaml_text, run_name)
+    def launch(
+        self,
+        yaml_text: str,
+        run_name: str,
+        selected_tasks: list[str] | None = None,
+    ) -> dict[str, Any]:
+        normalized, resolved, output = self._normalized(yaml_text, run_name, selected_tasks)
         if output.exists() and not resolved["resume"]:
             raise ExperimentLaunchError(
                 f"artifact run already exists: {run_name}; choose another name or enable resume"
@@ -233,4 +340,10 @@ class ExperimentManager:
         return record
 
 
-__all__ = ["ExperimentLaunchError", "ExperimentManager", "_atomic_json", "_now"]
+__all__ = [
+    "ExperimentLaunchError",
+    "ExperimentManager",
+    "discover_dataset_tasks",
+    "_atomic_json",
+    "_now",
+]

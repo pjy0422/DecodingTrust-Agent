@@ -73,6 +73,14 @@ the viewer's artifact root, so `--watch` registers completed episodes
 automatically. Runner output and status are retained under the configured state
 directory.
 
+The dataset picker reads only canonical runnable directories shaped as
+`dataset/<domain>/malicious/<threat_model>/<risk_category>/<task_id>`. Choose a
+domain, threat model, and risk category, then select any number of task IDs; the
+selection is persisted as `selection.tasks` in the normalized experiment YAML.
+Exact-task runs use distinct artifact directories and a bounded worker queue
+with at most 16 concurrent tasks, so larger selections proceed in 16-task
+waves. The server rejects paths that are not present in its own dataset catalog.
+
 The launcher is disabled unless all four server arguments and a launch token
 are present:
 

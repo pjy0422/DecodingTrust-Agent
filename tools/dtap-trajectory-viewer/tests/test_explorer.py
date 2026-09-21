@@ -17,6 +17,19 @@ def test_viewer_refresh_is_manual_and_does_not_reset_reading_position():
     assert "window.setInterval" not in app_js
 
 
+def test_experiment_ui_has_hierarchical_multi_task_picker():
+    web = Path(__file__).parents[1] / "dtap_traj" / "web"
+    app_js = (web / "app.js").read_text(encoding="utf-8")
+    css = (web / "app.css").read_text(encoding="utf-8")
+
+    assert "/api/experiments/datasets" in app_js
+    assert "data-dataset-level" in app_js
+    assert "data-dataset-task" in app_js
+    assert "Select visible" in app_js
+    assert "max_parallel" in app_js
+    assert ".dataset-browser" in css
+
+
 def write_episode(root: Path, domain: str, threat: str, i: int, attack: bool = False) -> Path:
     d = root / domain / threat
     d.mkdir(parents=True, exist_ok=True)
