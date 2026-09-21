@@ -1,9 +1,8 @@
 # Current policy-evaluation baseline
 
-This file freezes the legacy `policy.engine: claude-code` control group. The
-default native policy engine is DT Arms and is documented separately in
-`DT_ARMS_ENGINE.md`; changing that default does not alter the Claude prompt or
-its parity fixtures.
+This file freezes the default `policy.engine: claude-code` control group. The
+opt-in native DT Arms engine is documented separately in `DT_ARMS_ENGINE.md`;
+selecting it does not alter the Claude prompt or its parity fixtures.
 
 Source provenance:
 

@@ -140,6 +140,35 @@ def test_raw_dt_arms_trajectory_is_normalized_only_for_viewer(tmp_path: Path) ->
     }
 
 
+def test_dt_arms_openai_provider_adapter_is_process_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel_key = "provider-key"
+    sentinel_url = "https://ollama.example/v1/"
+    monkeypatch.setenv("DTAP_ARMS_OPENAI_API_KEY", sentinel_key)
+    monkeypatch.setenv("DTAP_ARMS_OPENAI_BASE_URL", sentinel_url)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    env = run_dt_arms_e2e._generation_environment(Namespace(dtap_root=ROOT))
+
+    assert env["OPENAI_API_KEY"] == sentinel_key
+    assert env["OPENAI_BASE_URL"] == sentinel_url.rstrip("/")
+    assert "DTAP_ARMS_OPENAI_API_KEY" not in env
+    assert "DTAP_ARMS_OPENAI_BASE_URL" not in env
+    assert str(ROOT) == env["PYTHONPATH"].split(":", 1)[0]
+    assert env["DTAP_DATASET_ROOT"] == str(ROOT / "dataset")
+
+
+def test_dt_arms_provider_adapter_rejects_non_http_remote(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DTAP_ARMS_OPENAI_BASE_URL", "file:///tmp/provider")
+
+    with pytest.raises(ValueError, match="DTAP_ARMS_OPENAI_BASE_URL"):
+        run_dt_arms_e2e._generation_environment(Namespace(dtap_root=ROOT))
+
+
 @pytest.mark.asyncio
 async def test_generation_exhaustion_is_not_reported_as_authoritative_failure(
     monkeypatch: pytest.MonkeyPatch,

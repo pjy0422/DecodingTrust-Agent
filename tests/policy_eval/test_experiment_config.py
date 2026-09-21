@@ -29,7 +29,7 @@ def test_checked_in_experiment_config_controls_independent_budgets() -> None:
     assert loaded["max_submissions"] == raw["budgets"]["h_victim_executions"]
     assert loaded["max_submit_calls"] == raw["budgets"]["q_submit_calls"]
     assert loaded["max_placement_actions"] == raw["budgets"]["max_placement_actions"]
-    assert loaded["policy_engine"] == "dt-arms-upstream"
+    assert loaded["policy_engine"] == "claude-code"
     assert loaded["dt_arms_max_iterations"] == 10
     assert loaded["policy_max_turns"] is None
     assert loaded["harness_protocol"] == "v1"
@@ -88,7 +88,7 @@ def test_resolved_document_contains_no_environment_or_credentials() -> None:
     assert document["policy"]["improvement_wishes"] is True
     assert document["policy"]["dying_message"] is True
     assert document["policy"]["harness_protocol"] == "v1"
-    assert document["policy"]["engine"] == "dt-arms-upstream"
+    assert document["policy"]["engine"] == "claude-code"
     assert document["dt_arms"]["max_iterations"] == 10
     rendered = yaml.safe_dump(document).lower()
     assert "api_key" not in rendered
@@ -113,6 +113,7 @@ def test_lazy_schema_protocol_is_explicit_and_closed(tmp_path: Path) -> None:
 
 def test_dt_arms_rejects_claude_only_lazy_schema_protocol(tmp_path: Path) -> None:
     raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["policy"]["engine"] = "dt-arms-upstream"
     raw["policy"]["harness_protocol"] = "lazy-schema-v2"
     target = tmp_path / "config.yaml"
     target.write_text(yaml.safe_dump(raw), encoding="utf-8")
@@ -137,6 +138,7 @@ def test_policy_engine_is_explicit_and_closed(tmp_path: Path) -> None:
 
 def test_dt_arms_rejects_victim_harness_not_supported_upstream(tmp_path: Path) -> None:
     raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["policy"]["engine"] = "dt-arms-upstream"
     raw["victim"]["harness"] = "hermes"
     target = tmp_path / "config.yaml"
     target.write_text(yaml.safe_dump(raw), encoding="utf-8")

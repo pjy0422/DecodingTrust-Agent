@@ -28,6 +28,10 @@ from dt_arena.policy_eval.dt_arms_integration import (
 )
 
 
+DT_ARMS_OPENAI_API_KEY_ENV = "DTAP_ARMS_OPENAI_API_KEY"
+DT_ARMS_OPENAI_BASE_URL_ENV = "DTAP_ARMS_OPENAI_BASE_URL"
+
+
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -103,6 +107,32 @@ def _generation_command(args: argparse.Namespace, task_list: Path, generation: P
     return command
 
 
+def _generation_environment(args: argparse.Namespace) -> dict[str, str]:
+    """Build the native DT Arms environment without persisting credentials.
+
+    DT Arms intentionally retains upstream provider routing. Its ordinary
+    model-name path uses the OpenAI SDK, while the DTAP viewer commonly receives
+    one Ollama credential through provider-neutral server configuration. The
+    two DTAP_ARMS_* variables form an explicit process-boundary adapter; they
+    are consumed here and are never written to YAML or artifacts.
+    """
+
+    env = os.environ.copy()
+    api_key = env.pop(DT_ARMS_OPENAI_API_KEY_ENV, "").strip()
+    base_url = env.pop(DT_ARMS_OPENAI_BASE_URL_ENV, "").strip()
+    if api_key:
+        env["OPENAI_API_KEY"] = api_key
+    if base_url:
+        if not base_url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
+            raise ValueError(f"invalid {DT_ARMS_OPENAI_BASE_URL_ENV}")
+        env["OPENAI_BASE_URL"] = base_url.rstrip("/")
+    env["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(args.dtap_root), env.get("PYTHONPATH", "")) if value
+    )
+    env["DTAP_DATASET_ROOT"] = str(args.dtap_root / "dataset")
+    return env
+
+
 async def _stop_process_group(process: asyncio.subprocess.Process) -> None:
     if process.returncode is not None:
         return
@@ -130,11 +160,22 @@ async def _run(args: argparse.Namespace) -> int:
     shutil.copy2(args.task_dir / "config.yaml", artifacts / "original-config.yaml")
     task_list = write_task_list(args.task_dir, generation / "task.jsonl")
     _stage(generation, "dt_arms_starting", max_iterations=args.max_iterations)
-    env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join(
-        value for value in (str(args.dtap_root), env.get("PYTHONPATH", "")) if value
-    )
-    env["DTAP_DATASET_ROOT"] = str(args.dtap_root / "dataset")
+    try:
+        env = _generation_environment(args)
+    except ValueError as exc:
+        _stage(generation, "pipeline_error", error="dt_arms_provider_config")
+        _emit(
+            {
+                "status": "failed",
+                **identity,
+                "policy_engine": "dt-arms-upstream",
+                "failure_class": "provider_config",
+                "evaluation_completed": False,
+                "error": str(exc),
+            },
+            artifacts,
+        )
+        return 1
     process = await asyncio.create_subprocess_exec(
         *_generation_command(args, task_list, generation),
         cwd=args.dtap_root,

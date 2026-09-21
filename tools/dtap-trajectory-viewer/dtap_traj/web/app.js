@@ -64,7 +64,7 @@ function experimentControlOptions(items,current){
 }
 function syncExperimentControlElements(){
   const values={
-    experimentPolicyEngine:experimentControlValue('policy','engine','dt-arms-upstream'),
+    experimentPolicyEngine:experimentControlValue('policy','engine','claude-code'),
     experimentHarnessProtocol:experimentControlValue('policy','harness_protocol','v1'),
     experimentPlanningStrategy:experimentControlValue('policy','planning_strategy','current'),
     experimentVictimHarness:experimentControlValue('victim','harness','openclaw'),
@@ -495,7 +495,7 @@ function experimentWorkspace(){
   const detail=exp.jobDetail;
   const progress=detail?.progress;const taskRows=(progress?.tasks||[]).map(task=>`<div class="job-task"><div><b>${esc(task.task)}</b><small>${esc(task.stage)}${task.iteration_limit?` · max iterations ${esc(task.iteration_limit)}`:task.attempts||task.h_limit?` · H ${esc(task.attempts)}/${esc(task.h_limit??'?')}`:''}${task.episode_status?` · ${esc(task.episode_status)}`:''}</small></div><span class="task-progress-status ${esc(task.status)}">${task.attack_success===true?'attack success':esc(task.status)}</span></div>`).join('');
   const progressSummary=progress?`<div class="job-progress-summary"><span><b>${progress.total}</b> total</span><span><b>${progress.completed}</b> completed</span><span><b>${progress.running}</b> running</span><span><b>${progress.queued}</b> queued</span><span><b>${progress.failed}</b> failed</span></div><div class="job-task-list">${taskRows||'<div class="empty compact">No resolved tasks.</div>'}</div>`:'';
-  const policyEngine=experimentControlValue('policy','engine','dt-arms-upstream');
+  const policyEngine=experimentControlValue('policy','engine','claude-code');
   const harnessProtocol=experimentControlValue('policy','harness_protocol','v1');
   const planningStrategy=experimentControlValue('policy','planning_strategy','current');
   const victimHarness=experimentControlValue('victim','harness','openclaw');
