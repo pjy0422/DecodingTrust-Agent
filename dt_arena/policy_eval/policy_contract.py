@@ -53,9 +53,158 @@ def _exact_keys(value: Mapping[str, Any], allowed: set[str], *, required: set[st
         raise PolicyContractViolation("invalid feedback schema")
 
 
+def _validate_feedback_v4(value: dict[str, Any]) -> dict[str, Any]:
+    _exact_keys(
+        value,
+        {
+            "schema_version",
+            "final_response",
+            "trace_complete",
+            "tool_sequence",
+            "steps",
+            "guidance",
+            "reasoning_summary",
+        },
+        required={"schema_version", "final_response", "trace_complete", "tool_sequence", "steps"},
+    )
+    if (
+        not isinstance(value["final_response"], str)
+        or not isinstance(value["trace_complete"], bool)
+        or not isinstance(value["tool_sequence"], (list, tuple))
+        or not isinstance(value["steps"], (list, tuple))
+    ):
+        raise PolicyContractViolation("invalid feedback schema")
+    for call in value["tool_sequence"]:
+        if not isinstance(call, Mapping):
+            raise PolicyContractViolation("invalid feedback schema")
+        _exact_keys(call, {"tool", "status"}, required={"tool", "status"})
+        if not isinstance(call["tool"], str) or call["status"] not in {"ok", "error", "incomplete"}:
+            raise PolicyContractViolation("invalid feedback schema")
+    reason_classes = {
+        "authority_channel_mismatch",
+        "injection_detected",
+        "privacy_or_exfiltration",
+        "safety_policy_refusal",
+        "task_or_target_mismatch",
+        "tool_or_surface_not_reached",
+        "payload_not_presented",
+        "payload_ambiguous",
+        "insufficient_evidence",
+    }
+    unknown_reasons = {
+        "trace_incomplete",
+        "adapter_unsupported",
+        "identity_unavailable",
+        "result_incomplete",
+        "result_truncated",
+        "message_boundary_unavailable",
+        "skill_event_unavailable",
+        "instrumentation_unavailable",
+    }
+    effects = {"followed", "partially_followed", "rejected", "ignored", "unclear"}
+    seen_steps: set[int] = set()
+    for step in value["steps"]:
+        if not isinstance(step, Mapping):
+            raise PolicyContractViolation("invalid feedback schema")
+        required = {"step_index", "injection_type", "target_state"}
+        allowed = required | {
+            "matched_tool",
+            "call_indices",
+            "response_match",
+            "presentation",
+            "unknown_reasons",
+            "effect",
+            "reason_classes",
+            "confidence",
+        }
+        _exact_keys(step, allowed, required=required)
+        index = step["step_index"]
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or index < 0
+            or index in seen_steps
+            or step["injection_type"] not in {"prompt", "tool", "environment", "skill"}
+            or step["target_state"]
+            not in {
+                "called",
+                "not_called",
+                "accessed",
+                "not_accessed",
+                "used",
+                "not_used",
+                "error",
+                "incomplete",
+                "unknown",
+                "not_applicable",
+            }
+        ):
+            raise PolicyContractViolation("invalid feedback schema")
+        seen_steps.add(index)
+        if "matched_tool" in step and not isinstance(step["matched_tool"], str):
+            raise PolicyContractViolation("invalid feedback schema")
+        indices = step.get("call_indices", ())
+        if not isinstance(indices, (list, tuple)) or any(
+            isinstance(item, bool) or not isinstance(item, int) or item < 0 for item in indices
+        ):
+            raise PolicyContractViolation("invalid feedback schema")
+        reasons = step.get("unknown_reasons", ())
+        if not isinstance(reasons, (list, tuple)) or any(item not in unknown_reasons for item in reasons):
+            raise PolicyContractViolation("invalid feedback schema")
+        if step.get("response_match", "unknown") not in {"matched", "not_matched", "unknown"}:
+            raise PolicyContractViolation("invalid feedback schema")
+        if step.get("presentation", "unknown") not in {"presented", "not_presented", "unknown"}:
+            raise PolicyContractViolation("invalid feedback schema")
+        attribution_keys = {"effect", "reason_classes", "confidence"}.intersection(step)
+        if attribution_keys and attribution_keys != {"effect", "reason_classes", "confidence"}:
+            raise PolicyContractViolation("invalid feedback schema")
+        if attribution_keys:
+            classes = step["reason_classes"]
+            if (
+                step["effect"] not in effects
+                or step["confidence"] not in {"low", "medium", "high"}
+                or not isinstance(classes, (list, tuple))
+                or not classes
+                or any(item not in reason_classes for item in classes)
+            ):
+                raise PolicyContractViolation("invalid feedback schema")
+    guidance = value.get("guidance")
+    if guidance is not None:
+        if not isinstance(guidance, Mapping):
+            raise PolicyContractViolation("invalid feedback schema")
+        keys = {"diagnosis", "overall_effect", "confidence", "preserve", "reconsider"}
+        _exact_keys(guidance, keys, required=keys)
+        if (
+            not isinstance(guidance["diagnosis"], str)
+            or guidance["overall_effect"] not in effects
+            or guidance["confidence"] not in {"low", "medium", "high"}
+            or not isinstance(guidance["preserve"], (list, tuple))
+            or not isinstance(guidance["reconsider"], (list, tuple))
+            or any(
+                not isinstance(item, str)
+                for item in (*guidance["preserve"], *guidance["reconsider"])
+            )
+        ):
+            raise PolicyContractViolation("invalid feedback schema")
+    summary = value.get("reasoning_summary")
+    if summary is not None:
+        if not isinstance(summary, Mapping):
+            raise PolicyContractViolation("invalid feedback schema")
+        _exact_keys(summary, {"source", "summary"}, required={"source", "summary"})
+        if (
+            summary["source"] not in {"explicit_reasoning", "assistant_rationale"}
+            or not isinstance(summary["summary"], str)
+            or not summary["summary"].strip()
+        ):
+            raise PolicyContractViolation("invalid feedback schema")
+    return value
+
+
 def _validate_feedback_projection(raw: Mapping[str, Any]) -> dict[str, Any]:
     """Validate the M7 DTO before it crosses the existing leakage guard."""
     value = dict(raw)
+    if value.get("schema_version") == 4:
+        return _validate_feedback_v4(value)
     _exact_keys(
         value,
         {"schema_version", "final_response", "deterministic", "digest", "reasoning_summary"},

@@ -125,6 +125,7 @@ def load_episode_bundle(path: str | Path, *, attempt_index: int | None = None) -
     )
     result = _read_json(_first(root, ("result.json",)))
     judges = load_judge_results(selected_root)
+    feedback_evidence = _read_json(_first(selected_root, ("feedback-evidence.json",)))
     evaluation = {
         key: result[key]
         for key in (
@@ -152,6 +153,8 @@ def load_episode_bundle(path: str | Path, *, attempt_index: int | None = None) -
     if evaluation:
         data["evaluation"] = evaluation
     data["judges"] = judges
+    if feedback_evidence:
+        data["feedback_evidence"] = feedback_evidence
     victim_metadata = (
         victim_payload.get("traj_info", {}).get("metadata", {})
         if isinstance(victim_payload.get("traj_info"), dict)

@@ -110,11 +110,17 @@ def create_app(
         except ExperimentLaunchError as exc:
             raise HTTPException(404, str(exc)) from None
 
+    @app.get("/api/experiments/datasets")
+    def experiment_datasets(x_dtap_launch_token: str | None = Header(None)):
+        return authorized_manager(x_dtap_launch_token).datasets()
+
     @app.post("/api/experiments/validate")
     def validate_experiment(payload: dict, x_dtap_launch_token: str | None = Header(None)):
         try:
             return authorized_manager(x_dtap_launch_token).validate(
-                str(payload.get("yaml", "")), str(payload.get("run_name", ""))
+                str(payload.get("yaml", "")),
+                str(payload.get("run_name", "")),
+                payload.get("tasks"),
             )
         except ExperimentLaunchError as exc:
             raise HTTPException(422, str(exc)) from None
@@ -123,7 +129,9 @@ def create_app(
     def launch_experiment(payload: dict, x_dtap_launch_token: str | None = Header(None)):
         try:
             return authorized_manager(x_dtap_launch_token).launch(
-                str(payload.get("yaml", "")), str(payload.get("run_name", ""))
+                str(payload.get("yaml", "")),
+                str(payload.get("run_name", "")),
+                payload.get("tasks"),
             )
         except ExperimentLaunchError as exc:
             raise HTTPException(422, str(exc)) from None
@@ -212,6 +220,7 @@ def create_app(
             "attempt_index": data.get("attempt_index"),
             "attempts": data.get("attempts") or [],
             "victim_usage": data.get("victim_usage"),
+            "feedback_evidence": data.get("feedback_evidence"),
         }
         if view in {"policy", "combined"}:
             payload["policy"] = data.get("policy_timeline") or []

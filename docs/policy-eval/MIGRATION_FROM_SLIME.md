@@ -7,7 +7,7 @@ primary provenance labels.
 | --- | --- |
 | M4 | policy security boundary, submission budget, fresh-attempt isolation |
 | M5 | trusted environment route/read-back verification |
-| M6 | policy-scoped placement apply + opaque receipt validation |
+| M6 | policy-scoped placement apply + qualified-tool receipt validation |
 | M7 | bounded failed-attempt feedback / observability |
 | P3 holdout | disjoint holdout policy-evaluation matrix |
 

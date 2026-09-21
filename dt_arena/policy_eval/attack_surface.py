@@ -29,7 +29,7 @@ class ToolSpec:
     # ``to_dict`` below. ``None`` fails closed for environment tools.
     placement_capability: str | None = None
     # Trusted MCP metadata used only by the receipt coordinator. It is not
-    # projected to the policy; policies can reference only opaque action ids.
+    # projected to the policy; policies reference their own qualified tool names.
     placement_resource: PlacementResourceContract | None = None
 
     def to_dict(self, *, compact_description: bool = False) -> dict[str, Any]:

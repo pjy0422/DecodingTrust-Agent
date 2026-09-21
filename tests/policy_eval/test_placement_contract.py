@@ -415,24 +415,78 @@ async def test_generated_resource_dependency_is_explicit_and_replayed(monkeypatc
     )
 
     news_receipt = await coordinator.apply(news)
-    news_id = news_receipt["action_id"]
-    assert coordinator.validate(news_id)["valid"] is True
+    news_tool = news_receipt["tool_name"]
+    assert "action_id" not in news_receipt
+    assert coordinator.validate(news_tool)["valid"] is True
 
     missing = await coordinator.apply(comment)
     assert missing == {
         "accepted": False,
-        "dependency_action_ids": [news_id],
+        "dependency_tool_names": [news_tool],
         "error": {"code": "DEPENDENCY_REQUIRED"},
     }
     assert len(calls) == 1
 
-    comment_receipt = await coordinator.apply(comment, depends_on=[news_id])
+    comment_receipt = await coordinator.apply(comment, depends_on=[news_tool])
     assert comment_receipt["accepted"] is True
     assert comment_receipt["dependency_count"] == 1
     assert len(calls[1]["steps"]) == 2
     assert calls[1]["placement_target_index"] == 1
     assert calls[1]["steps"][0].injection_mcp_tool.endswith(":create_news")
     assert calls[1]["steps"][1].injection_mcp_tool.endswith(":create_comment")
+
+
+@pytest.mark.asyncio
+async def test_tool_scoped_pending_validation_and_latest_dependency(monkeypatch) -> None:
+    calls = []
+
+    def materialize(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            output_root=Path("/unused"),
+            task_dir=Path("/unused"),
+            placement_target_index=kwargs["placement_target_index"],
+            steps=kwargs["steps"],
+        )
+
+    monkeypatch.setattr("dt_arena.policy_eval.placement.materialize_attempt_dir", materialize)
+    coordinator = _coordinator(_Runner())
+    first = await coordinator.apply(
+        _step("create_news", {"title": "first", "summary": "s", "symbol": "AAPL"})
+    )
+    tool_name = first["tool_name"]
+    blocked = await coordinator.apply(
+        _step("inject_html_portfolio", {"prompt": "payload", "page": "portfolios"})
+    )
+    assert blocked == {
+        "accepted": False,
+        "tool_name": tool_name,
+        "error": {"code": "PLACEMENT_VALIDATION_REQUIRED"},
+    }
+    mismatch = coordinator.validate("finance-injection:inject_html_portfolio")
+    assert mismatch == {
+        "found": False,
+        "tool_name": tool_name,
+        "error": {"code": "TOOL_MISMATCH"},
+    }
+    validated = coordinator.validate(tool_name)
+    assert validated["valid"] is True
+    assert coordinator.validate(tool_name) == validated
+    assert coordinator.validate("finance-injection:never-applied") == {
+        "found": False,
+        "error": {"code": "NO_PENDING_PLACEMENT"},
+    }
+
+    second = await coordinator.apply(
+        _step("create_news", {"title": "second", "summary": "s", "symbol": "AAPL"})
+    )
+    coordinator.validate(second["tool_name"])
+    comment = await coordinator.apply(
+        _step("create_comment", {"symbol": "AAPL", "content": "p", "article_id": 12345678}),
+        depends_on=[tool_name],
+    )
+    assert comment["accepted"] is True
+    assert calls[-1]["steps"][0].kwargs["title"] == "second"
 
 
 @pytest.mark.asyncio
@@ -457,7 +511,7 @@ async def test_invalid_placement_does_not_fabricate_expected_or_repair_fields(mo
     receipt = await coordinator.apply(
         _step("inject_html_portfolio", {"prompt": "payload", "page": "portfolios"})
     )
-    result = coordinator.validate(receipt["action_id"])
+    result = coordinator.validate(receipt["tool_name"])
     assert result["diagnostic"] == {
         "locator_fields": ["kwargs.page", "kwargs.symbol"],
         "retryable": False,
@@ -486,7 +540,7 @@ async def test_retryable_injection_failure_exposes_only_adapter_repair_fields(mo
     receipt = await coordinator.apply(
         _step("inject_html_portfolio", {"prompt": "payload", "page": "portfolios"})
     )
-    result = coordinator.validate(receipt["action_id"])
+    result = coordinator.validate(receipt["tool_name"])
     assert result["diagnostic"]["retryable"] is True
     assert result["repair"] == {
         "fields": ["kwargs.page"],
@@ -507,15 +561,15 @@ async def test_dependency_must_be_owned_validated_and_compatible(monkeypatch) ->
         "create_comment",
         {"symbol": "AAPL", "content": "payload", "article_id": 12345678},
     )
-    assert (await coordinator.apply(comment, depends_on=["x" * 24]))["error"]["code"] == "UNKNOWN_DEPENDENCY"
-    assert (await coordinator.apply(comment, depends_on=["x" * 129]))["error"]["code"] == "INVALID_DEPENDENCY"
+    assert (await coordinator.apply(comment, depends_on=["unknown:provider"]))["error"]["code"] == "UNKNOWN_DEPENDENCY"
+    assert (await coordinator.apply(comment, depends_on=["x" * 257]))["error"]["code"] == "INVALID_DEPENDENCY"
 
     news_receipt = await coordinator.apply(
         _step("create_news", {"title": "t", "summary": "s", "symbol": "AAPL"})
     )
     assert (
-        await coordinator.apply(comment, depends_on=[news_receipt["action_id"]])
-    )["error"]["code"] == "UNVERIFIED_DEPENDENCY"
+        await coordinator.apply(comment, depends_on=[news_receipt["tool_name"]])
+    )["error"]["code"] == "PLACEMENT_VALIDATION_REQUIRED"
 
 
 @pytest.mark.asyncio
@@ -581,7 +635,7 @@ async def test_dependency_identity_uses_adapter_locators_not_domain_rules(monkey
             "kwargs": {"value": "payload"},
         }
     )
-    coordinator.validate(created["action_id"])
+    coordinator.validate(created["tool_name"])
     result = await coordinator.apply(
         {
             "type": "environment",
@@ -589,7 +643,7 @@ async def test_dependency_identity_uses_adapter_locators_not_domain_rules(monkey
             "injection_mcp_tool": "example-injection:attach_record",
             "kwargs": {"record_id": "other"},
         },
-        depends_on=[created["action_id"]],
+        depends_on=[created["tool_name"]],
     )
     assert result == {
         "accepted": False,

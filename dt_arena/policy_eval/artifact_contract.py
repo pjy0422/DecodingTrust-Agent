@@ -20,6 +20,7 @@ EPISODE_MANIFEST = "episode-manifest.json"
 EPISODE_STATE = "episode-state.json"
 RESULT = "result.json"
 RESEARCH_FEEDBACK = "research-feedback.json"
+FEEDBACK_EVIDENCE = "feedback-evidence.json"
 
 
 @dataclass(frozen=True)

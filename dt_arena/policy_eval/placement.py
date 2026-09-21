@@ -236,6 +236,8 @@ class PlacementCoordinator:
         self._receipt_steps: dict[str, str] = {}
         self._receipt_step_objects: dict[str, Any] = {}
         self._receipt_replay_steps: dict[str, tuple[Any, ...]] = {}
+        self._receipt_ids_by_tool: dict[str, list[str]] = {}
+        self._pending_id: str | None = None
         self._attempts = 0
         self._validated_ids: set[str] = set()
         self._lock = asyncio.Lock()
@@ -260,31 +262,42 @@ class PlacementCoordinator:
             {"accepted": False, "error": {"code": code}}
         )
 
+    def _latest_receipt_id(self, tool_name: str, *, require_valid: bool) -> str | None:
+        for receipt_id in reversed(self._receipt_ids_by_tool.get(tool_name, ())):
+            if receipt_id not in self._validated_ids:
+                continue
+            if require_valid and not self._receipts[receipt_id].valid:
+                continue
+            return receipt_id
+        return None
+
     def _resolve_dependencies(self, raw: Any, step: Any) -> tuple[tuple[Any, ...], tuple[str, ...]] | dict[str, Any]:
         if raw is None:
-            dependency_ids: tuple[str, ...] = ()
+            dependency_tools: tuple[str, ...] = ()
         elif (
             not isinstance(raw, list)
             or len(raw) > self.max_actions
             or any(
-                not isinstance(item, str) or len(item) < 24 or len(item) > 128
+                not isinstance(item, str) or not item or len(item) > 256
                 for item in raw
             )
             or len(set(raw)) != len(raw)
         ):
             return self._dependency_error("INVALID_DEPENDENCY")
         else:
-            dependency_ids = tuple(raw)
+            dependency_tools = tuple(raw)
 
         current_contract = self._resource_contract(step)
         replay: list[Any] = []
         seen: set[str] = set()
-        for action_id in dependency_ids:
-            result = self._receipts.get(action_id)
-            if result is None:
+        dependency_ids: list[str] = []
+        for tool_name in dependency_tools:
+            if tool_name not in self._receipt_ids_by_tool:
                 return self._dependency_error("UNKNOWN_DEPENDENCY")
-            if action_id not in self._validated_ids or not result.valid:
+            action_id = self._latest_receipt_id(tool_name, require_valid=True)
+            if action_id is None:
                 return self._dependency_error("UNVERIFIED_DEPENDENCY")
+            dependency_ids.append(action_id)
             dependency_step = self._receipt_step_objects[action_id]
             dependency_contract = self._resource_contract(dependency_step)
             if (
@@ -303,27 +316,33 @@ class PlacementCoordinator:
 
         if current_contract is not None and current_contract.role == "consumer":
             candidates = tuple(
-                action_id
-                for action_id in sorted(self._validated_ids)
-                if self._receipts[action_id].valid
-                and (dependency := self._resource_contract(
-                    self._receipt_step_objects[action_id]
-                )) is not None
+                tool_name
+                for tool_name in sorted(self._receipt_ids_by_tool)
+                if (action_id := self._latest_receipt_id(tool_name, require_valid=True)) is not None
+                and (dependency := self._resource_contract(self._receipt_step_objects[action_id])) is not None
                 and dependency.role == "provider"
                 and dependency.kind == current_contract.kind
             )
-            if candidates and not set(candidates).intersection(dependency_ids):
+            if candidates and not set(candidates).intersection(dependency_tools):
                 return self.policy_contract.public_payload(
                     {
                         "accepted": False,
                         "error": {"code": "DEPENDENCY_REQUIRED"},
-                        "dependency_action_ids": list(candidates),
+                        "dependency_tool_names": list(candidates),
                     }
                 )
-        return tuple(replay), dependency_ids
+        return tuple(replay), tuple(dependency_ids)
 
     async def apply(self, raw_step: Any, *, depends_on: Any = None) -> dict[str, Any]:
         async with self._lock:
+            if self._pending_id is not None:
+                return self.policy_contract.public_payload(
+                    {
+                        "accepted": False,
+                        "tool_name": self._qualified_name(self._receipt_step_objects[self._pending_id]),
+                        "error": {"code": "PLACEMENT_VALIDATION_REQUIRED"},
+                    }
+                )
             if self._attempts >= self.max_actions:
                 return self.policy_contract.public_payload({"accepted": False, "error": {"code": "PLACEMENT_LIMIT"}})
             try:
@@ -372,29 +391,52 @@ class PlacementCoordinator:
                     {"accepted": False, "error": {"code": "EVALUATION_UNAVAILABLE"}}
                 )
             action_id = f"act_{secrets.token_urlsafe(24)}"
+            tool_name = self._qualified_name(validated.step)
             self._receipts[action_id] = result
             self._receipt_steps[action_id] = canonical_policy_json(validated.step.to_dict())
             self._receipt_step_objects[action_id] = validated.step
             self._receipt_replay_steps[action_id] = (*dependency_steps, validated.step)
+            self._receipt_ids_by_tool.setdefault(tool_name, []).append(action_id)
+            self._pending_id = action_id
             return self.policy_contract.public_payload(
                 {
                     "accepted": True,
-                    "action_id": action_id,
+                    "tool_name": tool_name,
                     "applied": result.applied,
                     "placement_ready": True,
                     "dependency_count": len(dependency_ids),
                 }
             )
 
-    def validate(self, action_id: Any) -> dict[str, Any]:
-        if not isinstance(action_id, str) or len(action_id) < 24:
-            return self.policy_contract.public_payload({"found": False, "error": {"code": "UNKNOWN_ACTION"}})
-        result = self._receipts.get(action_id)
-        if result is None:
-            return self.policy_contract.public_payload({"found": False, "error": {"code": "UNKNOWN_ACTION"}})
+    def validate(self, tool_name: Any) -> dict[str, Any]:
+        if not isinstance(tool_name, str) or not tool_name or len(tool_name) > 256:
+            return self.policy_contract.public_payload(
+                {"found": False, "error": {"code": "NO_PENDING_PLACEMENT"}}
+            )
+        action_id = self._pending_id
+        if action_id is not None:
+            pending_tool = self._qualified_name(self._receipt_step_objects[action_id])
+            if pending_tool != tool_name:
+                return self.policy_contract.public_payload(
+                    {
+                        "found": False,
+                        "tool_name": pending_tool,
+                        "error": {"code": "TOOL_MISMATCH"},
+                    }
+                )
+            self._validated_ids.add(action_id)
+            self._pending_id = None
+        else:
+            action_id = self._latest_receipt_id(tool_name, require_valid=False)
+            if action_id is None:
+                return self.policy_contract.public_payload(
+                    {"found": False, "error": {"code": "NO_PENDING_PLACEMENT"}}
+                )
+        result = self._receipts[action_id]
         self._validated_ids.add(action_id)
         payload: dict[str, Any] = {
             "found": True,
+            "tool_name": tool_name,
             "valid": result.valid,
             "status": result.status,
         }

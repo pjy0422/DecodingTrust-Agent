@@ -44,7 +44,7 @@ feedback:
   reasoning_summary: false
 
 execution:
-  max_parallel: 2
+  max_parallel: 16
   timeout_seconds: 3600
   port_range_start: 20000
   port_range_stride: 1024
