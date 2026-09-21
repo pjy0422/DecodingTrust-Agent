@@ -10,6 +10,10 @@ import yaml
 
 
 SCHEMA = "dtap.policy-eval/experiment-v1"
+# Keep these two values local: the trajectory viewer intentionally loads this
+# validator directly from its file path, outside package import context.
+HARNESS_PROTOCOL_V1 = "v1"
+HARNESS_PROTOCOLS = (HARNESS_PROTOCOL_V1, "lazy-schema-v2")
 
 
 class ExperimentConfigError(ValueError):
@@ -99,6 +103,13 @@ def _turn_budget(value: Any, path: str) -> int | None:
     return _positive_int(value, path)
 
 
+def _harness_protocol(value: Any) -> str:
+    raw = _string(value, "policy.harness_protocol")
+    if raw not in HARNESS_PROTOCOLS:
+        raise ExperimentConfigError(f"unsupported policy harness protocol: {raw!r}")
+    return raw
+
+
 def load_experiment_config(path: Path) -> dict[str, Any]:
     """Load one matrix configuration into argparse-compatible defaults.
 
@@ -139,7 +150,7 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
     policy = _section(
         root,
         "policy",
-        {"planning_strategy", "max_turns", "improvement_wishes", "dying_message"},
+        {"harness_protocol", "planning_strategy", "max_turns", "improvement_wishes", "dying_message"},
     )
     victim = _section(root, "victim", {"harness", "max_turns"})
     budgets = _section(
@@ -194,6 +205,7 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
         "planning_strategy": _string(
             policy.get("planning_strategy", "current"), "policy.planning_strategy"
         ),
+        "harness_protocol": _harness_protocol(policy.get("harness_protocol", HARNESS_PROTOCOL_V1)),
         "policy_max_turns": _turn_budget(policy.get("max_turns", "auto"), "policy.max_turns"),
         "improvement_wishes": _boolean(
             policy.get("improvement_wishes", False), "policy.improvement_wishes"
@@ -255,6 +267,7 @@ def resolved_experiment_document(args: Any) -> dict[str, Any]:
         },
         "models": {"policy": args.policy_model, "victim": args.victim_model},
         "policy": {
+            "harness_protocol": args.harness_protocol,
             "planning_strategy": args.planning_strategy,
             "max_turns": args.policy_max_turns,
             "improvement_wishes": args.improvement_wishes,

@@ -7,16 +7,81 @@ filesystem, config, victim-agent, or judge mutation.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from .actions import candidate_attack_step_schema
+from .actions import candidate_attack_step_schema, targeted_candidate_attack_step_schema
 from .authority import EpisodeAuthorityRegistry
 from .policy_contract import PolicyContract
+from .protocol import (
+    HARNESS_PROTOCOL_LAZY_SCHEMA_V2,
+    HARNESS_PROTOCOL_V1,
+    validate_harness_protocol,
+)
 from .security_policy import EvaluationSecurityPolicy, PolicyInputLimitError
 from .service import EpisodeAccessError, EpisodeRegistry
 from .validation import ValidationContext
 from .validation import validate_attack_step as validate_candidate_step
+
+
+MAX_TOOL_SCHEMA_RESPONSE_BYTES = 64 * 1024
+
+
+def _tool_schema_payload(
+    surface: Any,
+    qualified_name: str,
+    *,
+    compact_description: bool,
+) -> dict[str, Any] | None:
+    matches = [
+        (usage, tool)
+        for usage, tools in (
+            ("victim", surface.victim_tools),
+            ("environment", surface.environment_tools),
+        )
+        for tool in tools
+        if tool.qualified_name == qualified_name
+    ]
+    # Exact names must identify one public capability. A cross-catalog collision
+    # fails closed instead of adding a policy-controlled disambiguation oracle.
+    if len(matches) != 1:
+        return None
+    usage, tool = matches[0]
+    description = tool.to_summary_dict(compact_description=compact_description)["description"]
+    payload = {
+        "found": True,
+        "qualified_name": tool.qualified_name,
+        "usage": usage,
+        "description": description,
+        "input_schema": tool.input_schema,
+        "candidate_step_schema": targeted_candidate_attack_step_schema(
+            usage=usage,
+            qualified_name=tool.qualified_name,
+            input_schema=tool.input_schema,
+            modes=surface.tool_modes if usage == "victim" else (),
+        ),
+    }
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    return payload if len(encoded) <= MAX_TOOL_SCHEMA_RESPONSE_BYTES else None
+
+
+def _servable_tool_names(surface: Any, *, compact_description: bool) -> frozenset[str]:
+    names = {tool.qualified_name for tool in (*surface.victim_tools, *surface.environment_tools)}
+    return frozenset(
+        name
+        for name in names
+        if _tool_schema_payload(surface, name, compact_description=compact_description) is not None
+    )
 
 
 def parse_bearer_token(headers: Mapping[str, str]) -> str:
@@ -121,10 +186,12 @@ class M4EpisodeService:
         registry: EpisodeAuthorityRegistry,
         contract: PolicyContract,
         security_policy: EvaluationSecurityPolicy,
+        harness_protocol: str = HARNESS_PROTOCOL_V1,
     ) -> None:
         self.registry = registry
         self.contract = contract
         self.security_policy = security_policy
+        self.harness_protocol = validate_harness_protocol(harness_protocol)
 
     def _contract(self, authority: Any) -> PolicyContract:
         return authority.policy_contract or self.contract
@@ -143,8 +210,18 @@ class M4EpisodeService:
     def get_attack_surface(self, token: str) -> dict[str, Any]:
         authority = self.registry.resolve(token)
         authority.mcp_calls.record("get_attack_surface")
-        result = authority.view.attack_surface.to_dict(compact_descriptions=True)
-        result["candidate_step_schema"] = candidate_attack_step_schema()
+        if self.harness_protocol == HARNESS_PROTOCOL_LAZY_SCHEMA_V2:
+            included = _servable_tool_names(
+                authority.view.attack_surface,
+                compact_description=True,
+            )
+            result = authority.view.attack_surface.to_lazy_schema_dict(
+                compact_descriptions=True,
+                included_tool_names=included,
+            )
+        else:
+            result = authority.view.attack_surface.to_dict(compact_descriptions=True)
+            result["candidate_step_schema"] = candidate_attack_step_schema()
         result["policy_limits"] = {
             "max_steps_per_plan": self.security_policy.max_steps_per_plan,
             "max_placement_actions": self.security_policy.max_placement_actions,
@@ -159,11 +236,79 @@ class M4EpisodeService:
                 authority.terminal_event.set()
             raise RuntimeError("request unavailable") from None
 
+    def get_tool_schema(self, token: str, tool_name: Any) -> dict[str, Any]:
+        authority = self.registry.resolve(token)
+        authority.mcp_calls.record("get_tool_schema")
+        rejected = {"found": False, "error": {"code": "TOOL_NOT_ALLOWED"}}
+        if (
+            self.harness_protocol != HARNESS_PROTOCOL_LAZY_SCHEMA_V2
+            or not isinstance(tool_name, str)
+            or not tool_name
+            or len(tool_name.encode("utf-8")) > 512
+        ):
+            return self._contract(authority).public_payload(rejected)
+        payload = _tool_schema_payload(
+            authority.view.attack_surface,
+            tool_name,
+            compact_description=True,
+        )
+        if payload is None:
+            return self._contract(authority).public_payload(rejected)
+        try:
+            public = self._contract(authority).public_payload(payload)
+            authority.schema_access.record(tool_name)
+            return public
+        except Exception:
+            if not authority.coordinator.runtime.terminal:
+                authority.coordinator.runtime.record_security_failure(stage="tool_schema")
+                authority.terminal_event.set()
+            raise RuntimeError("request unavailable") from None
+
+    def _schema_gate(self, authority: Any, step: Any) -> dict[str, Any] | None:
+        if self.harness_protocol != HARNESS_PROTOCOL_LAZY_SCHEMA_V2 or not isinstance(step, Mapping):
+            return None
+        step_type = step.get("type")
+        field = "injected_tool" if step_type == "tool" else "injection_mcp_tool"
+        if step_type not in {"tool", "environment"} or not isinstance(step.get(field), str):
+            return None
+        tool_name = step[field]
+        payload = _tool_schema_payload(
+            authority.view.attack_surface,
+            tool_name,
+            compact_description=True,
+        )
+        if payload is None:
+            return {
+                "valid": False,
+                "errors": [
+                    {
+                        "code": "TARGET_NOT_ALLOWED",
+                        "path": field,
+                        "message": "tool target is not in this task's attack surface",
+                    }
+                ],
+            }
+        if not authority.schema_access.contains(tool_name):
+            return {
+                "valid": False,
+                "errors": [
+                    {
+                        "code": "SCHEMA_NOT_LOADED",
+                        "path": field,
+                        "message": "call get_tool_schema for this target before validation",
+                    }
+                ],
+            }
+        return None
+
     def validate_attack_step(self, token: str, step: dict[str, Any]) -> dict[str, Any]:
         authority = self.registry.resolve(token)
         authority.mcp_calls.record("validate_attack_step")
         try:
             self.security_policy.preflight_plan({"steps": [step]})
+            gated = self._schema_gate(authority, step)
+            if gated is not None:
+                return self._contract(authority).public_payload(gated)
             result = validate_candidate_step(
                 step,
                 ValidationContext.from_view(authority.view),
@@ -228,6 +373,7 @@ def create_core_policy_mcp_server(
     *,
     security_policy: EvaluationSecurityPolicy,
     contract: PolicyContract | None = None,
+    harness_protocol: str = HARNESS_PROTOCOL_V1,
 ):
     """Create the frozen four-tool M4 server using one atomic authority registry."""
 
@@ -237,7 +383,13 @@ def create_core_policy_mcp_server(
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("FastMCP >= 2.6 is required for M4 bearer routing") from exc
 
-    service = M4EpisodeService(registry, contract or PolicyContract(), security_policy)
+    harness_protocol = validate_harness_protocol(harness_protocol)
+    service = M4EpisodeService(
+        registry,
+        contract or PolicyContract(),
+        security_policy,
+        harness_protocol,
+    )
     mcp = FastMCP(name="DTAP RL Harness M4")
 
     def token() -> str:
@@ -252,6 +404,13 @@ def create_core_policy_mcp_server(
     def get_attack_surface() -> dict:
         """Return the allowlisted attack surface and action schema."""
         return service.get_attack_surface(token())
+
+    if harness_protocol == HARNESS_PROTOCOL_LAZY_SCHEMA_V2:
+
+        @mcp.tool
+        def get_tool_schema(tool_name: str) -> dict:
+            """Return one allowlisted tool's schema without consuming evaluation budgets."""
+            return service.get_tool_schema(token(), tool_name)
 
     @mcp.tool
     def validate_attack_step(step: dict[str, Any]) -> dict:
@@ -271,15 +430,22 @@ def create_policy_mcp_server(
     *,
     security_policy: EvaluationSecurityPolicy,
     contract: PolicyContract | None = None,
+    harness_protocol: str = HARNESS_PROTOCOL_V1,
 ):
-    """Create M6's six-tool surface with episode-scoped placement receipts."""
+    """Create the versioned policy surface with episode-scoped placement receipts."""
     try:
         from fastmcp import FastMCP
         from fastmcp.server.dependencies import get_http_headers
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("FastMCP >= 2.6 is required for M6 bearer routing") from exc
 
-    service = M4EpisodeService(registry, contract or PolicyContract(), security_policy)
+    harness_protocol = validate_harness_protocol(harness_protocol)
+    service = M4EpisodeService(
+        registry,
+        contract or PolicyContract(),
+        security_policy,
+        harness_protocol,
+    )
     mcp = FastMCP(name="DTAP RL Harness M6")
 
     def token() -> str:
@@ -294,6 +460,13 @@ def create_policy_mcp_server(
     def get_attack_surface() -> dict:
         """Return the allowlisted attack surface and action schema."""
         return service.get_attack_surface(token())
+
+    if harness_protocol == HARNESS_PROTOCOL_LAZY_SCHEMA_V2:
+
+        @mcp.tool
+        def get_tool_schema(tool_name: str) -> dict:
+            """Return one allowlisted tool's schema without consuming H, Q, or placement budget."""
+            return service.get_tool_schema(token(), tool_name)
 
     @mcp.tool
     def validate_attack_step(step: dict[str, Any]) -> dict:

@@ -30,6 +30,7 @@ from dt_arena.policy_eval.experiment_config import (
     load_experiment_config,
     write_resolved_experiment,
 )
+from dt_arena.policy_eval.protocol import HARNESS_PROTOCOLS
 from dt_arena.policy_eval.security_policy import policy_max_turn_budget
 
 
@@ -369,6 +370,8 @@ async def _run_case(
         args.policy_model,
         "--planning-strategy",
         args.planning_strategy,
+        "--harness-protocol",
+        args.harness_protocol,
         "--victim-model",
         args.victim_model,
         "--victim-agent-type",
@@ -690,6 +693,11 @@ def main() -> None:
     parser.add_argument("--policy-model", default=config_defaults.get("policy_model", "deepseek-v4-flash"))
     parser.add_argument(
         "--planning-strategy", default=config_defaults.get("planning_strategy", "current")
+    )
+    parser.add_argument(
+        "--harness-protocol",
+        choices=HARNESS_PROTOCOLS,
+        default=config_defaults.get("harness_protocol", "v1"),
     )
     parser.add_argument(
         "--improvement-wishes",

@@ -13,6 +13,7 @@ Execution flow:
 Claude Code policy
     -> policy-scoped DTAP MCP
        -> task / attack-surface projection
+       -> lazy per-target tool schema lookup (lazy-schema-v2)
        -> step validation
        -> environment apply + placement receipt (when applicable)
           -> explicit replay of owned, positively validated prerequisites
@@ -75,6 +76,21 @@ The `budgets` section controls three independent limits:
   invalid submission. Q must be at least H.
 - `max_placement_actions`: consumed by `apply_attack_step`; placement
   validation itself does not consume this budget.
+
+The policy MCP contract is selected independently from the planning strategy:
+
+```yaml
+policy:
+  harness_protocol: lazy-schema-v2
+  planning_strategy: current
+```
+
+`v1` is the frozen six-tool reproduction baseline. `lazy-schema-v2` uses seven
+tools: `get_attack_surface` returns channel/mode and tool-name/description
+summaries, and the policy calls `get_tool_schema(qualified_name)` only for a
+selected victim or environment target before `validate_attack_step`. Schema
+lookup is served from the immutable episode catalog and consumes no H, Q,
+apply, or placement budget. Prompt and skill steps need no schema lookup.
 
 After every accepted H execution, the policy emits a concise honest report.
 Two optional report fields are controlled independently under `policy`:

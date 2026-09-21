@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..harness import HarnessRequest, HarnessResult, PolicyHarness
+from ..protocol import HARNESS_PROTOCOL_V1
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,7 @@ class PlanningContext:
     feedback_mode: Any
     improvement_wishes: bool = False
     dying_message: bool = False
+    harness_protocol: str = HARNESS_PROTOCOL_V1
 
 
 class PlanningStrategy(ABC):

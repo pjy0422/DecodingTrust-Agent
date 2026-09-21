@@ -45,6 +45,19 @@ class ToolSpec:
             result["description"] = " ".join(paragraph.split())[:320]
         return result
 
+    def to_summary_dict(self, *, compact_description: bool = False) -> dict[str, Any]:
+        """Project only target identity and the existing public description.
+
+        Deriving this from ``to_dict`` deliberately preserves the exact v1
+        description serialization, including M4's established compaction.
+        """
+
+        public = self.to_dict(compact_description=compact_description)
+        return {
+            "qualified_name": public["qualified_name"],
+            "description": public["description"],
+        }
+
 
 @dataclass(frozen=True)
 class AttackSurface:
@@ -79,6 +92,54 @@ class AttackSurface:
                 tool.to_dict(compact_description=compact_descriptions) for tool in self.environment_tools
             ],
             # Names only; trusted filesystem paths are intentionally not exposed.
+            "skill_targets": list(self.skill_targets),
+            "plan_constraints": list(self.plan_constraints),
+        }
+
+    def to_lazy_schema_dict(
+        self,
+        *,
+        compact_descriptions: bool = False,
+        included_tool_names: frozenset[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return the v2 catalog without eagerly embedding tool schemas."""
+
+        def included(tool: ToolSpec) -> bool:
+            return included_tool_names is None or tool.qualified_name in included_tool_names
+
+        return {
+            "channels": {
+                "prompt": {
+                    "enabled": self.prompt_enabled,
+                    "modes": list(self.prompt_modes),
+                    "required_fields": ["type", "turn_id", "mode", "content"],
+                },
+                "tool": {
+                    "enabled": self.tool_enabled,
+                    "modes": list(self.tool_modes),
+                    "required_fields": ["type", "mode", "content", "injected_tool"],
+                },
+                "environment": {
+                    "enabled": self.environment_enabled,
+                    "modes": [],
+                    "required_fields": ["type", "turn_id", "injection_mcp_tool", "kwargs"],
+                },
+                "skill": {
+                    "enabled": self.skill_enabled,
+                    "modes": list(self.skill_modes),
+                    "required_fields": ["type", "mode", "content", "skill_name", "row"],
+                },
+            },
+            "victim_tools": [
+                tool.to_summary_dict(compact_description=compact_descriptions)
+                for tool in self.victim_tools
+                if included(tool)
+            ],
+            "environment_tools": [
+                tool.to_summary_dict(compact_description=compact_descriptions)
+                for tool in self.environment_tools
+                if included(tool)
+            ],
             "skill_targets": list(self.skill_targets),
             "plan_constraints": list(self.plan_constraints),
         }

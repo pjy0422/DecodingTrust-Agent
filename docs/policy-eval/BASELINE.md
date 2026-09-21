@@ -17,6 +17,11 @@ Current execution behavior is versioned and regression-tested:
 - placement-enabled policy surface has six MCP tools:
   `get_task_spec`, `get_attack_surface`, `validate_attack_step`,
   `apply_attack_step`, `validate_placement`, `submit_attack`.
+- `policy.harness_protocol: v1` preserves that frozen six-tool control. The
+  opt-in `lazy-schema-v2` protocol adds `get_tool_schema`, removes eager tool
+  schemas from `get_attack_surface`, and requires target schema lookup before
+  validating tool or environment steps. Existing public tool descriptions are
+  preserved unchanged.
 - `apply_attack_step` accepts an optional list of owned, positively validated
   prerequisite qualified tool names. Internal receipt ids remain private.
   Dependencies are exact resource-contract matches,

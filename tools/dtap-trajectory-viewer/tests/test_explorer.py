@@ -33,7 +33,15 @@ def test_experiment_ui_has_hierarchical_multi_task_picker():
     assert "job-progress-summary" in app_js
     assert "Task progress updates when Refresh is clicked" in app_js
     assert "Full feedback evidence" in app_js
+    assert 'id="experimentHarnessProtocol"' in app_js
+    assert 'id="experimentPlanningStrategy"' in app_js
+    assert 'id="experimentVictimHarness"' in app_js
+    assert 'id="experimentFeedbackMode"' in app_js
+    assert "updateExperimentControl" in app_js
+    assert "writeYamlControl" in app_js
+    assert "lazy-schema-v2" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert ".dataset-browser" in css
+    assert ".runtime-fields" in css
     assert ".job-task-list" in css
 
 

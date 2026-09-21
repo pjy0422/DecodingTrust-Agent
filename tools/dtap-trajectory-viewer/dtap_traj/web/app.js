@@ -1,3 +1,5 @@
+import {EXPERIMENT_CONTROL_OPTIONS,readYamlControl,writeYamlControl} from './yaml_controls.js';
+
 const MODES = new Set(['trajectories','performance','experiments']);
 function modeFromLocation(){
   const requested=new URLSearchParams(window.location.search).get('view');
@@ -54,6 +56,28 @@ async function loadExperimentTemplate(name){
   const exp=state.experiments;const data=await experimentApi(`/api/experiments/templates/${encodeURIComponent(name)}`);
   exp.template=data.name;exp.yaml=data.yaml;exp.validation=null;exp.selectedTasks.clear();
   if(!exp.runName)exp.runName=nextAutoRunName();
+}
+function experimentControlValue(section,key,fallback){return readYamlControl(state.experiments.yaml,section,key,fallback);}
+function experimentControlOptions(items,current){
+  const known=items.some(([value])=>value===current);
+  return `${known?'':`<option data-custom-option value="${esc(current)}" selected>Custom · ${esc(current)}</option>`}${items.map(([value,label])=>`<option value="${esc(value)}" ${value===current?'selected':''}>${esc(label)}</option>`).join('')}`;
+}
+function syncExperimentControlElements(){
+  const values={
+    experimentHarnessProtocol:experimentControlValue('policy','harness_protocol','v1'),
+    experimentPlanningStrategy:experimentControlValue('policy','planning_strategy','current'),
+    experimentVictimHarness:experimentControlValue('victim','harness','openclaw'),
+    experimentFeedbackMode:experimentControlValue('feedback','mode','disabled'),
+  };
+  Object.entries(values).forEach(([id,value])=>{
+    const select=$(`#${id}`);if(!select)return;
+    let custom=select.querySelector('[data-custom-option]');const known=[...select.options].some(option=>!option.dataset.customOption&&option.value===value);
+    if(known){custom?.remove();}else{if(!custom){custom=document.createElement('option');custom.dataset.customOption='';select.prepend(custom);}custom.value=value;custom.textContent=`Custom · ${value}`;}
+    select.value=value;
+  });
+}
+function updateExperimentControl(section,key,value,label){
+  const exp=state.experiments;exp.yaml=writeYamlControl(exp.yaml,section,key,value);exp.validation=null;exp.message=`${label} set to ${value}; config.yaml updated.`;render();
 }
 async function validateExperiment(){
   const exp=state.experiments;exp.message='Validating…';render();
@@ -467,7 +491,11 @@ function experimentWorkspace(){
   const detail=exp.jobDetail;
   const progress=detail?.progress;const taskRows=(progress?.tasks||[]).map(task=>`<div class="job-task"><div><b>${esc(task.task)}</b><small>${esc(task.stage)}${task.attempts||task.h_limit?` · H ${esc(task.attempts)}/${esc(task.h_limit??'?')}`:''}${task.episode_status?` · ${esc(task.episode_status)}`:''}</small></div><span class="task-progress-status ${esc(task.status)}">${task.attack_success===true?'attack success':esc(task.status)}</span></div>`).join('');
   const progressSummary=progress?`<div class="job-progress-summary"><span><b>${progress.total}</b> total</span><span><b>${progress.completed}</b> completed</span><span><b>${progress.running}</b> running</span><span><b>${progress.queued}</b> queued</span><span><b>${progress.failed}</b> failed</span></div><div class="job-task-list">${taskRows||'<div class="empty compact">No resolved tasks.</div>'}</div>`:'';
-  return `<main class="experiment-workspace"><div class="experiment-primary">${datasetPicker()}<section class="launcher-card editor-card"><div class="launcher-title"><div><h1>Run policy evaluation</h1><p>Edit a strict experiment-v1 YAML. Click-selected tasks override the profile matrix and are written into the normalized config.</p></div><button id="lockLauncher">Lock</button></div><div class="launcher-fields"><label>Template<select id="experimentTemplate">${templateOptions}</select></label><label>Run name<input id="experimentRunName" value="${esc(exp.runName)}" maxlength="80"></label></div><label>config.yaml<textarea id="experimentYaml" spellcheck="false">${esc(exp.yaml)}</textarea></label><div class="launcher-actions"><button id="validateExperiment">Validate + normalize</button><button id="launchExperiment" class="primary">Run E2E</button></div><div class="launcher-message">${esc(exp.message||'Changes are not submitted until Run E2E is confirmed.')}</div>${exp.validation?`<details><summary>Resolved configuration</summary><pre>${esc(JSON.stringify(exp.validation.resolved,null,2))}</pre></details>`:''}</section></div><section class="launcher-card jobs-card"><div class="launcher-title"><div><h2>Experiment jobs</h2><p>Task progress updates when Refresh is clicked. Completed artifacts appear automatically in Trajectories.</p></div><button id="refreshJobs">Refresh</button></div><div class="job-list">${jobs}</div>${detail?`<div class="job-detail"><h3>${esc(detail.run_name)} · ${esc(detail.status)}</h3><p>${esc(detail.artifact_path)}</p>${progressSummary}<details><summary>Runner logs</summary><pre>${esc(detail.log_tail||'Waiting for runner output…')}</pre></details></div>`:''}</section></main>`;
+  const harnessProtocol=experimentControlValue('policy','harness_protocol','v1');
+  const planningStrategy=experimentControlValue('policy','planning_strategy','current');
+  const victimHarness=experimentControlValue('victim','harness','openclaw');
+  const feedbackMode=experimentControlValue('feedback','mode','disabled');
+  return `<main class="experiment-workspace"><div class="experiment-primary">${datasetPicker()}<section class="launcher-card editor-card"><div class="launcher-title"><div><h1>Run policy evaluation</h1><p>Edit a strict experiment-v1 YAML. Click-selected tasks and runtime controls are written into the config immediately.</p></div><button id="lockLauncher">Lock</button></div><div class="launcher-fields"><label>Template<select id="experimentTemplate">${templateOptions}</select></label><label>Run name<input id="experimentRunName" value="${esc(exp.runName)}" maxlength="80"></label></div><div class="launcher-fields runtime-fields"><label>Policy protocol<select id="experimentHarnessProtocol">${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.harnessProtocol,harnessProtocol)}</select></label><label>Planning strategy<select id="experimentPlanningStrategy">${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.planningStrategy,planningStrategy)}</select></label><label>Victim harness<select id="experimentVictimHarness">${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.victimHarness,victimHarness)}</select></label><label>Feedback mode<select id="experimentFeedbackMode">${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.feedbackMode,feedbackMode)}</select></label></div><p class="runtime-control-note">Changing a runtime control updates config.yaml immediately. Optional victim harness dependencies are checked when the run starts.</p><label>config.yaml<textarea id="experimentYaml" spellcheck="false">${esc(exp.yaml)}</textarea></label><div class="launcher-actions"><button id="validateExperiment">Validate + normalize</button><button id="launchExperiment" class="primary">Run E2E</button></div><div class="launcher-message">${esc(exp.message||'Changes are not submitted until Run E2E is confirmed.')}</div>${exp.validation?`<details><summary>Resolved configuration</summary><pre>${esc(JSON.stringify(exp.validation.resolved,null,2))}</pre></details>`:''}</section></div><section class="launcher-card jobs-card"><div class="launcher-title"><div><h2>Experiment jobs</h2><p>Task progress updates when Refresh is clicked. Completed artifacts appear automatically in Trajectories.</p></div><button id="refreshJobs">Refresh</button></div><div class="job-list">${jobs}</div>${detail?`<div class="job-detail"><h3>${esc(detail.run_name)} · ${esc(detail.status)}</h3><p>${esc(detail.artifact_path)}</p>${progressSummary}<details><summary>Runner logs</summary><pre>${esc(detail.log_tail||'Waiting for runner output…')}</pre></details></div>`:''}</section></main>`;
 }
 function bind(){
   document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>{
@@ -478,7 +506,11 @@ function bind(){
     $('#lockLauncher')?.addEventListener('click',()=>{state.experiments.token='';sessionStorage.removeItem('dtap-launch-token');render();});
     $('#experimentTemplate')?.addEventListener('change',async event=>{await loadExperimentTemplate(event.target.value);render();});
     $('#experimentRunName')?.addEventListener('input',event=>{state.experiments.runName=event.target.value;});
-    $('#experimentYaml')?.addEventListener('input',event=>{state.experiments.yaml=event.target.value;state.experiments.validation=null;});
+    $('#experimentHarnessProtocol')?.addEventListener('change',event=>updateExperimentControl('policy','harness_protocol',event.target.value,'Policy protocol'));
+    $('#experimentPlanningStrategy')?.addEventListener('change',event=>updateExperimentControl('policy','planning_strategy',event.target.value,'Planning strategy'));
+    $('#experimentVictimHarness')?.addEventListener('change',event=>updateExperimentControl('victim','harness',event.target.value,'Victim harness'));
+    $('#experimentFeedbackMode')?.addEventListener('change',event=>updateExperimentControl('feedback','mode',event.target.value,'Feedback mode'));
+    $('#experimentYaml')?.addEventListener('input',event=>{state.experiments.yaml=event.target.value;state.experiments.validation=null;syncExperimentControlElements();});
     document.querySelectorAll('[data-dataset-level]').forEach(button=>button.addEventListener('click',()=>{const exp=state.experiments;const level=button.dataset.datasetLevel;exp.datasetFocus[level]=button.dataset.datasetValue;if(level==='domain'){exp.datasetFocus.threat_model='';exp.datasetFocus.risk_category='';}else if(level==='threat_model'){exp.datasetFocus.risk_category='';}initializeDatasetFocus();render();}));
     document.querySelectorAll('[data-dataset-task]').forEach(input=>input.addEventListener('change',()=>{const selected=state.experiments.selectedTasks;if(input.checked)selected.add(input.dataset.datasetTask);else selected.delete(input.dataset.datasetTask);syncDatasetSelection();}));
     document.querySelectorAll('[data-remove-task]').forEach(button=>button.addEventListener('click',()=>{state.experiments.selectedTasks.delete(button.dataset.removeTask);syncDatasetSelection();}));

@@ -132,3 +132,42 @@ def candidate_attack_step_schema() -> dict[str, Any]:
             },
         ],
     }
+
+
+def targeted_candidate_attack_step_schema(
+    *,
+    usage: str,
+    qualified_name: str,
+    input_schema: dict[str, Any],
+    modes: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Build the candidate contract for one already-allowlisted tool target."""
+
+    string_content = {"type": "string", "minLength": 1}
+    if usage == "victim":
+        return {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["type", "mode", "content", "injected_tool"],
+            "properties": {
+                "type": {"const": "tool"},
+                "mode": {"enum": list(modes)},
+                "content": string_content,
+                "injected_tool": {"const": qualified_name},
+            },
+        }
+    if usage == "environment":
+        return {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["type", "turn_id", "injection_mcp_tool", "kwargs"],
+            "properties": {
+                "type": {"const": "environment"},
+                "turn_id": {"type": "integer", "minimum": 1},
+                "injection_mcp_tool": {"const": qualified_name},
+                "kwargs": input_schema,
+            },
+        }
+    raise ValueError("usage must be victim or environment")
