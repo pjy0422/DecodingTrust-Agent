@@ -253,6 +253,8 @@ class ExperimentManager:
                 )
         if resolved["max_submissions"] > 20:
             raise ExperimentLaunchError("budgets.h_victim_executions must be <= 20 from the viewer")
+        if resolved["dt_arms_max_iterations"] > 200:
+            raise ExperimentLaunchError("dt_arms.max_iterations must be <= 200 from the viewer")
         if resolved["max_submit_calls"] > 200 or resolved["max_placement_actions"] > 200:
             raise ExperimentLaunchError("Q and placement budgets must be <= 200 from the viewer")
         if resolved["timeout"] > 86_400:
@@ -383,10 +385,17 @@ class ExperimentManager:
                             )
 
         tasks: list[dict[str, Any]] = []
-        h_limit = resolved.get("max_submissions")
+        policy_engine = resolved.get("policy_engine")
+        h_limit = None if policy_engine == "dt-arms-upstream" else resolved.get("max_submissions")
+        iteration_limit = (
+            resolved.get("dt_arms_max_iterations")
+            if policy_engine == "dt-arms-upstream"
+            else None
+        )
         for label, task_root in planned:
             result = _read_json(task_root / "result.json")
             state = _read_json(task_root / "episode-state.json")
+            dt_arms_status = _read_json(task_root / "dt-arms/status.json")
             attempts_root = task_root / "attempts"
             attempts = (
                 len([path for path in attempts_root.glob("attempt-*") if path.is_dir()])
@@ -395,7 +404,20 @@ class ExperimentManager:
             )
             if result:
                 status = "completed" if result.get("status") == "passed" else "failed"
-                stage = "attack succeeded" if result.get("attack_success") is True else "evaluation complete"
+                if result.get("attack_success") is True:
+                    stage = "attack succeeded"
+                elif result.get("candidate_generated") is False:
+                    stage = "DT Arms generation exhausted"
+                else:
+                    stage = "evaluation complete"
+            elif dt_arms_status.get("stage") == "pipeline_error":
+                status, stage = "failed", "DT Arms pipeline error"
+            elif dt_arms_status.get("stage") == "judge_complete":
+                status, stage = "running", "authoritative judge complete"
+            elif dt_arms_status.get("stage") == "authoritative_replay":
+                status, stage = "running", "authoritative DTAP replay"
+            elif dt_arms_status.get("stage") == "dt_arms_starting":
+                status, stage = "running", "DT Arms native search"
             elif state.get("evaluation_delegate_completed"):
                 status, stage = "running", "attempt complete; policy continuing"
             elif attempts or (task_root / "submitted-config.yaml").is_file():
@@ -406,18 +428,24 @@ class ExperimentManager:
                 status, stage = "running", "starting"
             else:
                 status, stage = "queued", "waiting for worker"
-            tasks.append(
-                {
-                    "task": label,
-                    "status": status,
-                    "stage": stage,
-                    "attempts": attempts,
-                    "h_limit": h_limit,
-                    "attack_success": result.get("attack_success"),
-                    "episode_status": result.get("episode_status") or state.get("status"),
-                    "error": result.get("error_tail") or result.get("error"),
-                }
-            )
+            task_progress = {
+                "task": label,
+                "status": status,
+                "stage": stage,
+                "attempts": attempts,
+                "h_limit": h_limit,
+                "attack_success": result.get("attack_success"),
+                "episode_status": result.get("episode_status") or state.get("status"),
+                "error": (
+                    result.get("error_tail")
+                    or result.get("error")
+                    or dt_arms_status.get("error")
+                ),
+                "policy_engine": policy_engine,
+            }
+            if iteration_limit is not None:
+                task_progress["iteration_limit"] = iteration_limit
+            tasks.append(task_progress)
         counts = {
             status: sum(task["status"] == status for task in tasks)
             for status in ("completed", "running", "queued", "failed")

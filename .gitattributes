@@ -1,0 +1,3 @@
+# Preserve the pinned upstream subtree byte-for-byte, including its historical
+# whitespace. Integration code outside this path still uses normal checks.
+dt_arms/** -whitespace

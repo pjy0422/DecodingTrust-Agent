@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/AI-secure/DecodingTrust-Agent.git",
+  "branch": "yuzhou/macos-osworld-judges-v2",
+  "commit": "62595a72a8d798a0704cbb56a09521e15d0f30c2",
+  "subtree": "dt_arms",
+  "tree": "ef538379d19f8462ebe503f5edda38a4742ace77",
+  "content_sha256": "8962c9c6edfeeb400288ac85afe617572f84274fa23f1b06b8cf28b6f28f5f74",
+  "files": 279,
+  "bytes": 31664703
+}

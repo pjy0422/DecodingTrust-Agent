@@ -27,6 +27,8 @@ from dt_arena.policy_eval.benchmark_manifest import (
 )
 from dt_arena.policy_eval.experiment_config import (
     ExperimentConfigError,
+    POLICY_ENGINES,
+    POLICY_ENGINE_DT_ARMS,
     load_experiment_config,
     write_resolved_experiment,
 )
@@ -356,59 +358,110 @@ async def _run_case(
 
     start = args.port_range_start + slot * args.port_range_stride
     end = start + 511
-    command = [
-        args.python,
-        "-m",
-        "dt_arena.policy_eval.scripts.run_policy_e2e",
-        "--task-dir",
-        str(task.task_dir),
-        "--dtap-root",
-        str(args.dtap_root),
-        "--python",
-        args.python,
-        "--policy-model",
-        args.policy_model,
-        "--planning-strategy",
-        args.planning_strategy,
-        "--harness-protocol",
-        args.harness_protocol,
-        "--victim-model",
-        args.victim_model,
-        "--victim-agent-type",
-        args.victim_agent_type,
-        "--max-submissions",
-        str(args.max_submissions),
-        "--max-submit-calls",
-        str(args.max_submit_calls),
-        "--max-placement-actions",
-        str(args.max_placement_actions),
-        "--policy-max-turns",
-        str(args.policy_max_turns),
-        "--victim-max-turns",
-        str(args.victim_max_turns),
-        "--timeout",
-        str(args.timeout),
-        "--feedback-mode",
-        args.feedback_mode,
-        "--digestor-model",
-        args.digestor_model,
-        "--digestor-max-tokens",
-        str(args.digestor_max_tokens),
-        "--digestor-timeout",
-        str(args.digestor_timeout),
-        "--port-range-start",
-        str(start),
-        "--artifacts-dir",
-        str(case_dir),
-    ]
-    if args.placement_enabled:
-        command.append("--placement")
-    if args.reasoning_summary:
-        command.append("--reasoning-summary")
-    if args.improvement_wishes:
-        command.append("--improvement-wishes")
-    if args.dying_message:
-        command.append("--dying-message")
+    if args.policy_engine == POLICY_ENGINE_DT_ARMS:
+        command = [
+            args.python,
+            "-m",
+            "dt_arena.policy_eval.scripts.run_dt_arms_e2e",
+            "--task-dir",
+            str(task.task_dir),
+            "--dtap-root",
+            str(args.dtap_root),
+            "--python",
+            args.python,
+            "--artifacts-dir",
+            str(case_dir),
+            "--attacker-model",
+            args.policy_model,
+            "--victim-model",
+            args.victim_model,
+            "--victim-agent-type",
+            args.victim_agent_type,
+            "--judge-model",
+            args.dt_arms_judge_model,
+            "--max-iterations",
+            str(args.dt_arms_max_iterations),
+            "--victim-max-turns",
+            str(args.victim_max_turns),
+            "--timeout",
+            str(args.timeout),
+            "--port-range-start",
+            str(start),
+            "--memory-save-mode",
+            args.dt_arms_memory_save_mode,
+            "--max-turns-per-session",
+            str(args.dt_arms_max_turns_per_session),
+        ]
+        if args.dt_arms_use_memory:
+            command.append("--use-memory")
+        if args.dt_arms_update_memory:
+            command.append("--update-memory")
+        if args.dt_arms_auto_aggregate_memory:
+            command.append("--auto-aggregate-memory")
+        if not args.dt_arms_allow_quit:
+            command.append("--no-allow-quit")
+        if args.dt_arms_multi_turn:
+            command.append("--multi-turn")
+        if args.dt_arms_injection_override:
+            command.extend(["--injection-override", ",".join(args.dt_arms_injection_override)])
+        if args.dt_arms_allowed_skill_names:
+            command.extend(["--allowed-skill-names", ",".join(args.dt_arms_allowed_skill_names)])
+        if args.dt_arms_allowed_skill_types:
+            command.extend(["--allowed-skill-types", ",".join(args.dt_arms_allowed_skill_types)])
+    else:
+        command = [
+            args.python,
+            "-m",
+            "dt_arena.policy_eval.scripts.run_policy_e2e",
+            "--task-dir",
+            str(task.task_dir),
+            "--dtap-root",
+            str(args.dtap_root),
+            "--python",
+            args.python,
+            "--policy-model",
+            args.policy_model,
+            "--planning-strategy",
+            args.planning_strategy,
+            "--harness-protocol",
+            args.harness_protocol,
+            "--victim-model",
+            args.victim_model,
+            "--victim-agent-type",
+            args.victim_agent_type,
+            "--max-submissions",
+            str(args.max_submissions),
+            "--max-submit-calls",
+            str(args.max_submit_calls),
+            "--max-placement-actions",
+            str(args.max_placement_actions),
+            "--policy-max-turns",
+            str(args.policy_max_turns),
+            "--victim-max-turns",
+            str(args.victim_max_turns),
+            "--timeout",
+            str(args.timeout),
+            "--feedback-mode",
+            args.feedback_mode,
+            "--digestor-model",
+            args.digestor_model,
+            "--digestor-max-tokens",
+            str(args.digestor_max_tokens),
+            "--digestor-timeout",
+            str(args.digestor_timeout),
+            "--port-range-start",
+            str(start),
+            "--artifacts-dir",
+            str(case_dir),
+        ]
+        if args.placement_enabled:
+            command.append("--placement")
+        if args.reasoning_summary:
+            command.append("--reasoning-summary")
+        if args.improvement_wishes:
+            command.append("--improvement-wishes")
+        if args.dying_message:
+            command.append("--dying-message")
     env = os.environ.copy()
     env.update(
         {
@@ -462,11 +515,13 @@ async def _run_case(
         "selection_profile": "explicit" if task.explicit else args.selection_profile,
         "benchmark_index": task.benchmark_index,
         "policy_model": args.policy_model,
+        "policy_engine": args.policy_engine,
         "victim_model": args.victim_model,
         "victim_agent_type": args.victim_agent_type,
         "max_submissions": args.max_submissions,
         "max_submit_calls": args.max_submit_calls,
         "max_placement_actions": args.max_placement_actions,
+        "dt_arms_max_iterations": args.dt_arms_max_iterations,
         "improvement_wishes_enabled": args.improvement_wishes,
         "dying_message_enabled": args.dying_message,
         "returncode": process.returncode,
@@ -498,6 +553,7 @@ async def _run_case(
                     "judge_artifacts",
                     "environment_tools",
                     "policy_model",
+                    "policy_engine",
                     "victim_model",
                     "victim_agent_type",
                     "feedback_mode",
@@ -505,6 +561,10 @@ async def _run_case(
                     "improvement_wishes_enabled",
                     "dying_message_enabled",
                     "digestor_usage",
+                    "dt_arms_success",
+                    "dt_arms_max_iterations",
+                    "candidate_generated",
+                    "task_success",
                 )
             }
         )
@@ -537,9 +597,9 @@ async def _run_case(
 
 
 async def _main(args: argparse.Namespace) -> int:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if args.policy_engine != POLICY_ENGINE_DT_ARMS and not os.environ.get("ANTHROPIC_API_KEY"):
         raise RuntimeError("ANTHROPIC_API_KEY is required")
-    if shutil.which("openclaw") is None:
+    if args.victim_agent_type == "openclaw" and shutil.which("openclaw") is None:
         raise RuntimeError("openclaw CLI is required")
     highest = args.port_range_start + (args.max_parallel - 1) * args.port_range_stride + 511
     if args.port_range_stride < 512 or highest > 65535:
@@ -593,6 +653,8 @@ async def _main(args: argparse.Namespace) -> int:
         ),
         "selected_tasks": list(args.selected_tasks),
         "policy_model": args.policy_model,
+        "policy_engine": args.policy_engine,
+        "dt_arms_max_iterations": args.dt_arms_max_iterations,
         "victim_model": args.victim_model,
         "victim_agent_type": args.victim_agent_type,
         "max_submissions": args.max_submissions,
@@ -692,6 +754,11 @@ def main() -> None:
     parser.add_argument("--python", default=config_defaults.get("python", sys.executable))
     parser.add_argument("--policy-model", default=config_defaults.get("policy_model", "deepseek-v4-flash"))
     parser.add_argument(
+        "--policy-engine",
+        choices=POLICY_ENGINES,
+        default=config_defaults.get("policy_engine", "claude-code"),
+    )
+    parser.add_argument(
         "--planning-strategy", default=config_defaults.get("planning_strategy", "current")
     )
     parser.add_argument(
@@ -767,6 +834,65 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=config_defaults.get("resume", False),
     )
+    parser.add_argument(
+        "--dt-arms-judge-model",
+        default=config_defaults.get("dt_arms_judge_model", "deepseek-v4-flash"),
+    )
+    parser.add_argument(
+        "--dt-arms-max-iterations",
+        type=int,
+        default=config_defaults.get("dt_arms_max_iterations", 10),
+    )
+    parser.add_argument(
+        "--dt-arms-use-memory",
+        action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("dt_arms_use_memory", False),
+    )
+    parser.add_argument(
+        "--dt-arms-update-memory",
+        action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("dt_arms_update_memory", False),
+    )
+    parser.add_argument(
+        "--dt-arms-memory-save-mode",
+        choices=("all", "success"),
+        default=config_defaults.get("dt_arms_memory_save_mode", "success"),
+    )
+    parser.add_argument(
+        "--dt-arms-auto-aggregate-memory",
+        action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("dt_arms_auto_aggregate_memory", False),
+    )
+    parser.add_argument(
+        "--dt-arms-allow-quit",
+        action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("dt_arms_allow_quit", True),
+    )
+    parser.add_argument(
+        "--dt-arms-multi-turn",
+        action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("dt_arms_multi_turn", False),
+    )
+    parser.add_argument(
+        "--dt-arms-max-turns-per-session",
+        type=int,
+        default=config_defaults.get("dt_arms_max_turns_per_session", 5),
+    )
+    parser.add_argument(
+        "--dt-arms-injection-override",
+        nargs="*",
+        default=config_defaults.get("dt_arms_injection_override", []),
+    )
+    parser.add_argument(
+        "--dt-arms-allowed-skill-names",
+        nargs="*",
+        default=config_defaults.get("dt_arms_allowed_skill_names", []),
+    )
+    parser.add_argument(
+        "--dt-arms-allowed-skill-types",
+        nargs="*",
+        default=config_defaults.get("dt_arms_allowed_skill_types", []),
+    )
     args = parser.parse_args()
     args.dtap_root = args.dtap_root.expanduser().resolve()
     args.artifacts_root = args.artifacts_root.expanduser().resolve()
@@ -784,6 +910,14 @@ def main() -> None:
         parser.error("--tasks must not contain duplicates")
     if args.max_parallel > MAX_PARALLEL:
         parser.error(f"--max-parallel must be <= {MAX_PARALLEL}")
+    if (
+        args.policy_engine == POLICY_ENGINE_DT_ARMS
+        and args.harness_protocol != "v1"
+    ):
+        parser.error(
+            "--harness-protocol applies only to --policy-engine=claude-code; "
+            "DT Arms uses its pinned native red-team loop"
+        )
     for name in (
         "max_parallel",
         "victim_max_turns",
@@ -802,6 +936,8 @@ def main() -> None:
         parser.error("--max-placement-actions must be positive")
     if args.digestor_max_tokens < 64:
         parser.error("--digestor-max-tokens must be >= 64")
+    if args.dt_arms_max_iterations < 1 or args.dt_arms_max_turns_per_session < 1:
+        parser.error("DT Arms iteration and session-turn limits must be positive")
     try:
         args.policy_max_turns = policy_max_turn_budget(
             args.max_submissions, args.policy_max_turns

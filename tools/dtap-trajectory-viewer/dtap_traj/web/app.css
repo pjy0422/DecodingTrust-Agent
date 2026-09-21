@@ -235,6 +235,8 @@ button { color: inherit; }
 .launcher-title p { margin:5px 0 0; }
 .launcher-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .launcher-fields.runtime-fields { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.runtime-fields .legacy-control { opacity:.58; }
+.runtime-fields .legacy-control select:disabled { cursor:not-allowed; }
 .runtime-control-note { margin:8px 0 0; }
 .launcher-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
 .launcher-message { min-height:34px; margin-top:12px; padding:9px 11px; border:1px solid var(--line); border-radius:8px; background:var(--metric-bg); color:var(--muted); font-size:10px; overflow-wrap:anywhere; }

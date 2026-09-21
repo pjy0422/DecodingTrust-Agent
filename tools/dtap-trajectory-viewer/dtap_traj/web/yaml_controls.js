@@ -1,4 +1,8 @@
 export const EXPERIMENT_CONTROL_OPTIONS = Object.freeze({
+  policyEngine: Object.freeze([
+    ['dt-arms-upstream','DT Arms upstream · native red-team loop'],
+    ['claude-code','Claude Code · legacy policy MCP'],
+  ]),
   harnessProtocol: Object.freeze([
     ['v1','v1 · frozen six-tool control'],
     ['lazy-schema-v2','lazy-schema-v2 · seven tools'],
@@ -21,6 +25,14 @@ export const EXPERIMENT_CONTROL_OPTIONS = Object.freeze({
     ['pocketflow','PocketFlow'],
     ['strands','Strands SDK'],
     ['hermes','Hermes'],
+  ]),
+  dtArmsVictimHarness: Object.freeze([
+    ['openclaw','OpenClaw'],
+    ['openaisdk','OpenAI SDK'],
+    ['pocketflow','PocketFlow'],
+    ['langchain','LangChain'],
+    ['claudesdk','Claude SDK'],
+    ['googleadk','Google ADK'],
   ]),
 });
 

@@ -14,6 +14,17 @@ SCHEMA = "dtap.policy-eval/experiment-v1"
 # validator directly from its file path, outside package import context.
 HARNESS_PROTOCOL_V1 = "v1"
 HARNESS_PROTOCOLS = (HARNESS_PROTOCOL_V1, "lazy-schema-v2")
+POLICY_ENGINE_CLAUDE = "claude-code"
+POLICY_ENGINE_DT_ARMS = "dt-arms-upstream"
+POLICY_ENGINES = (POLICY_ENGINE_CLAUDE, POLICY_ENGINE_DT_ARMS)
+DT_ARMS_VICTIM_ARCHITECTURES = (
+    "openaisdk",
+    "pocketflow",
+    "langchain",
+    "claudesdk",
+    "googleadk",
+    "openclaw",
+)
 
 
 class ExperimentConfigError(ValueError):
@@ -69,6 +80,17 @@ def _string_list(value: Any, path: str) -> list[str]:
     return result
 
 
+def _optional_string_list(value: Any, path: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ExperimentConfigError(f"{path} must be a list")
+    result = [_string(item, f"{path}[]") for item in value]
+    if len(set(result)) != len(result):
+        raise ExperimentConfigError(f"{path} must not contain duplicates")
+    return result
+
+
 def _dataset_task_list(value: Any, path: str) -> list[str]:
     result = _string_list(value, path)
     for item in result:
@@ -110,6 +132,13 @@ def _harness_protocol(value: Any) -> str:
     return raw
 
 
+def _policy_engine(value: Any) -> str:
+    raw = _string(value, "policy.engine")
+    if raw not in POLICY_ENGINES:
+        raise ExperimentConfigError(f"unsupported policy engine: {raw!r}")
+    return raw
+
+
 def load_experiment_config(path: Path) -> dict[str, Any]:
     """Load one matrix configuration into argparse-compatible defaults.
 
@@ -137,6 +166,7 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
         "placement",
         "feedback",
         "execution",
+        "dt_arms",
     }
     unknown = sorted(set(root) - allowed_root)
     if unknown:
@@ -150,7 +180,14 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
     policy = _section(
         root,
         "policy",
-        {"harness_protocol", "planning_strategy", "max_turns", "improvement_wishes", "dying_message"},
+        {
+            "engine",
+            "harness_protocol",
+            "planning_strategy",
+            "max_turns",
+            "improvement_wishes",
+            "dying_message",
+        },
     )
     victim = _section(root, "victim", {"harness", "max_turns"})
     budgets = _section(
@@ -175,12 +212,69 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
         "execution",
         {"max_parallel", "timeout_seconds", "port_range_start", "port_range_stride", "resume"},
     )
+    dt_arms = _section(
+        root,
+        "dt_arms",
+        {
+            "judge_model",
+            "max_iterations",
+            "use_memory",
+            "update_memory",
+            "memory_save_mode",
+            "auto_aggregate_memory",
+            "allow_quit",
+            "multi_turn",
+            "max_turns_per_session",
+            "injection_override",
+            "allowed_skill_names",
+            "allowed_skill_types",
+        },
+    )
 
     config_dir = config_path.parent
     h = _positive_int(_required(budgets, "h_victim_executions", "budgets"), "budgets.h_victim_executions")
     q = _positive_int(_required(budgets, "q_submit_calls", "budgets"), "budgets.q_submit_calls")
     if q < h:
         raise ExperimentConfigError("budgets.q_submit_calls must be >= budgets.h_victim_executions")
+    policy_engine = _policy_engine(policy.get("engine", POLICY_ENGINE_CLAUDE))
+    harness_protocol = _harness_protocol(
+        policy.get("harness_protocol", HARNESS_PROTOCOL_V1)
+    )
+    if (
+        policy_engine == POLICY_ENGINE_DT_ARMS
+        and harness_protocol != HARNESS_PROTOCOL_V1
+    ):
+        raise ExperimentConfigError(
+            "policy.harness_protocol applies only to policy.engine='claude-code'; "
+            "DT Arms uses its pinned native red-team loop"
+        )
+    victim_agent_type = _string(victim.get("harness", "openclaw"), "victim.harness")
+    if (
+        policy_engine == POLICY_ENGINE_DT_ARMS
+        and victim_agent_type not in DT_ARMS_VICTIM_ARCHITECTURES
+    ):
+        raise ExperimentConfigError(
+            f"DT Arms does not support victim harness: {victim_agent_type!r}"
+        )
+    memory_save_mode = _string(dt_arms.get("memory_save_mode", "success"), "dt_arms.memory_save_mode")
+    if memory_save_mode not in {"all", "success"}:
+        raise ExperimentConfigError("dt_arms.memory_save_mode must be 'all' or 'success'")
+    injection_override = _optional_string_list(
+        dt_arms.get("injection_override"), "dt_arms.injection_override"
+    )
+    unknown_injections = sorted(
+        set(injection_override) - {"prompt", "tool", "environment", "skill", "a2a"}
+    )
+    if unknown_injections:
+        raise ExperimentConfigError(
+            f"unsupported dt_arms injection type: {unknown_injections[0]!r}"
+        )
+    multi_turn = _boolean(dt_arms.get("multi_turn", False), "dt_arms.multi_turn")
+    configured_threats = _string_list(
+        _required(selection, "threat_models", "selection"), "selection.threat_models"
+    )
+    if multi_turn and any(value != "direct" for value in configured_threats):
+        raise ExperimentConfigError("dt_arms.multi_turn requires direct-only task selection")
     defaults: dict[str, Any] = {
         "config": config_path,
         "dtap_root": _relative_path(
@@ -191,9 +285,7 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
         ),
         "python": _string(paths.get("python", "python"), "paths.python"),
         "domains": _string_list(_required(selection, "domains", "selection"), "selection.domains"),
-        "threat_models": _string_list(
-            _required(selection, "threat_models", "selection"), "selection.threat_models"
-        ),
+        "threat_models": configured_threats,
         "selection_profile": _string(selection.get("profile", "release-v1"), "selection.profile"),
         "selected_tasks": (
             _dataset_task_list(selection["tasks"], "selection.tasks")
@@ -202,16 +294,17 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
         ),
         "policy_model": _string(_required(models, "policy", "models"), "models.policy"),
         "victim_model": _string(_required(models, "victim", "models"), "models.victim"),
+        "policy_engine": policy_engine,
         "planning_strategy": _string(
             policy.get("planning_strategy", "current"), "policy.planning_strategy"
         ),
-        "harness_protocol": _harness_protocol(policy.get("harness_protocol", HARNESS_PROTOCOL_V1)),
+        "harness_protocol": harness_protocol,
         "policy_max_turns": _turn_budget(policy.get("max_turns", "auto"), "policy.max_turns"),
         "improvement_wishes": _boolean(
             policy.get("improvement_wishes", False), "policy.improvement_wishes"
         ),
         "dying_message": _boolean(policy.get("dying_message", False), "policy.dying_message"),
-        "victim_agent_type": _string(victim.get("harness", "openclaw"), "victim.harness"),
+        "victim_agent_type": victim_agent_type,
         "victim_max_turns": _positive_int(victim.get("max_turns", 80), "victim.max_turns"),
         "max_submissions": h,
         "max_submit_calls": q,
@@ -241,6 +334,37 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
             execution.get("port_range_stride", 1_024), "execution.port_range_stride"
         ),
         "resume": _boolean(execution.get("resume", False), "execution.resume"),
+        "dt_arms_judge_model": _string(
+            dt_arms.get("judge_model", _required(models, "victim", "models")),
+            "dt_arms.judge_model",
+        ),
+        "dt_arms_max_iterations": _positive_int(
+            dt_arms.get("max_iterations", 10), "dt_arms.max_iterations"
+        ),
+        "dt_arms_use_memory": _boolean(
+            dt_arms.get("use_memory", False), "dt_arms.use_memory"
+        ),
+        "dt_arms_update_memory": _boolean(
+            dt_arms.get("update_memory", False), "dt_arms.update_memory"
+        ),
+        "dt_arms_memory_save_mode": memory_save_mode,
+        "dt_arms_auto_aggregate_memory": _boolean(
+            dt_arms.get("auto_aggregate_memory", False), "dt_arms.auto_aggregate_memory"
+        ),
+        "dt_arms_allow_quit": _boolean(
+            dt_arms.get("allow_quit", True), "dt_arms.allow_quit"
+        ),
+        "dt_arms_multi_turn": multi_turn,
+        "dt_arms_max_turns_per_session": _positive_int(
+            dt_arms.get("max_turns_per_session", 5), "dt_arms.max_turns_per_session"
+        ),
+        "dt_arms_injection_override": injection_override,
+        "dt_arms_allowed_skill_names": _optional_string_list(
+            dt_arms.get("allowed_skill_names"), "dt_arms.allowed_skill_names"
+        ),
+        "dt_arms_allowed_skill_types": _optional_string_list(
+            dt_arms.get("allowed_skill_types"), "dt_arms.allowed_skill_types"
+        ),
     }
     return defaults
 
@@ -267,6 +391,7 @@ def resolved_experiment_document(args: Any) -> dict[str, Any]:
         },
         "models": {"policy": args.policy_model, "victim": args.victim_model},
         "policy": {
+            "engine": args.policy_engine,
             "harness_protocol": args.harness_protocol,
             "planning_strategy": args.planning_strategy,
             "max_turns": args.policy_max_turns,
@@ -293,6 +418,20 @@ def resolved_experiment_document(args: Any) -> dict[str, Any]:
             "port_range_start": args.port_range_start,
             "port_range_stride": args.port_range_stride,
             "resume": args.resume,
+        },
+        "dt_arms": {
+            "judge_model": args.dt_arms_judge_model,
+            "max_iterations": args.dt_arms_max_iterations,
+            "use_memory": args.dt_arms_use_memory,
+            "update_memory": args.dt_arms_update_memory,
+            "memory_save_mode": args.dt_arms_memory_save_mode,
+            "auto_aggregate_memory": args.dt_arms_auto_aggregate_memory,
+            "allow_quit": args.dt_arms_allow_quit,
+            "multi_turn": args.dt_arms_multi_turn,
+            "max_turns_per_session": args.dt_arms_max_turns_per_session,
+            "injection_override": list(args.dt_arms_injection_override),
+            "allowed_skill_names": list(args.dt_arms_allowed_skill_names),
+            "allowed_skill_types": list(args.dt_arms_allowed_skill_types),
         },
     }
 

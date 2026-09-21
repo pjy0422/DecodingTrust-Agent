@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     run_name TEXT NOT NULL,
     task_id TEXT,
     dataset_path TEXT,
+    policy_engine TEXT,
     policy_model TEXT,
     victim_model TEXT,
     victim_agent_type TEXT,
@@ -99,6 +100,7 @@ CREATE INDEX IF NOT EXISTS idx_tuning_workload ON tuning_trials(workload_fingerp
 _OPTIONAL_COLUMNS = {
     "task_id": "TEXT",
     "dataset_path": "TEXT",
+    "policy_engine": "TEXT",
     "policy_model": "TEXT",
     "victim_model": "TEXT",
     "victim_agent_type": "TEXT",
@@ -198,6 +200,7 @@ class TrajectoryDB:
             "run_name",
             "task_id",
             "dataset_path",
+            "policy_engine",
             "policy_model",
             "victim_model",
             "victim_agent_type",
@@ -260,10 +263,10 @@ class TrajectoryDB:
                 cohort_params.append(value)
         if q:
             cohort_clauses.append(
-                "(episode_id LIKE ? OR task_id LIKE ? OR dataset_path LIKE ? OR policy_model LIKE ? OR victim_model LIKE ? OR victim_agent_type LIKE ? OR risk_category LIKE ? OR artifact_path LIKE ?)"
+                "(episode_id LIKE ? OR task_id LIKE ? OR dataset_path LIKE ? OR policy_engine LIKE ? OR policy_model LIKE ? OR victim_model LIKE ? OR victim_agent_type LIKE ? OR risk_category LIKE ? OR artifact_path LIKE ?)"
             )
             needle = f"%{q}%"
-            cohort_params.extend([needle] * 8)
+            cohort_params.extend([needle] * 9)
         clauses = list(cohort_clauses)
         params = list(cohort_params)
         if attack_success is not None:

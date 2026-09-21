@@ -1,0 +1,7 @@
+# Aggregated memory files (generated from raw_data/)
+# These should be regenerated locally using: python -m dt_arms.src.memory.aggregate
+memory.jsonl
+embeddings.npz
+metadata.json
+
+raw_data/

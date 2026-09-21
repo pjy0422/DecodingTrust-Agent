@@ -3,24 +3,25 @@
 `dt_arena.policy_eval` is the DTAP-owned research runtime for evaluating an
 attack-planning policy against the real DTAP victim + judge stack.
 
-The current baseline launches **Claude Code CLI directly on the host**. It
-does not use the historical slime `M6ClaudeCodeHarness`. Claude Code receives
-only the DTAP policy MCP surface; native Bash/file/web tools are denied.
+The primary red-team engine is the pinned upstream **DT Arms** implementation.
+Its source lives unchanged under `dt_arms/`; provenance is recorded in
+`dt_arena/policy_eval/dt_arms_snapshot.json`. DT Arms keeps its native task
+access, skills, victim queries, judge feedback, and iterative attack loop. A
+successful generated `attack_result_*.yaml` is then merged into an isolated
+task copy and replayed exactly once through the authoritative DTAP evaluator.
+
+The previous **Claude Code CLI** policy-MCP engine remains available as the
+`claude-code` control. It receives only the DTAP policy MCP surface; native
+Bash/file/web tools are denied.
 
 Execution flow:
 
 ```text
-Claude Code policy
-    -> policy-scoped DTAP MCP
-       -> task / attack-surface projection
-       -> lazy per-target tool schema lookup (lazy-schema-v2)
-       -> step validation
-       -> environment apply + placement receipt (when applicable)
-          -> explicit replay of owned, positively validated prerequisites
-       -> bounded submit transaction
-          -> fresh DTAP victim subprocess
-          -> judge
-          -> bounded feedback on every failed H, including terminal H
+DT Arms upstream-native search
+    -> native attack skills + iterative victim/judge feedback
+    -> successful attack_result_*.yaml
+    -> immutable source-task checks + isolated candidate merge
+    -> one fresh authoritative DTAP victim + judge replay
     -> artifact v1 bundle
     -> tools/dtap-trajectory-viewer
 ```
@@ -69,6 +70,13 @@ python -m dt_arena.policy_eval matrix \
   --config dt_arena/policy_eval/configs/finance-travel-indirect-openclaw.yaml
 ```
 
+DT Arms keeps its upstream provider routing: ordinary model names use the
+OpenAI client (`OPENAI_API_KEY` and optional `OPENAI_BASE_URL`),
+`openrouter/...` uses `OPENROUTER_API_KEY`, Gemini uses `GOOGLE_API_KEY`, and
+Claude uses `ANTHROPIC_API_KEY`. The selected victim harness may require its
+own provider variables as well; OpenClaw uses its existing Anthropic-compatible
+environment. Credentials are never copied into experiment YAML or artifacts.
+
 The `budgets` section controls three independent limits:
 
 - `h_victim_executions`: H, consumed only when a victim execution starts.
@@ -81,6 +89,15 @@ The policy MCP contract is selected independently from the planning strategy:
 
 ```yaml
 policy:
+  engine: dt-arms-upstream
+```
+
+Use `engine: claude-code` for the retained policy-MCP control. Its MCP contract
+is selected independently from the planning strategy:
+
+```yaml
+policy:
+  engine: claude-code
   harness_protocol: lazy-schema-v2
   planning_strategy: current
 ```

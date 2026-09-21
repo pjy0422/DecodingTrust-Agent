@@ -242,9 +242,45 @@ def test_api_requires_token_and_launches_worker(monkeypatch, tmp_path: Path):
                 "attack_success": None,
                 "episode_status": None,
                 "error": None,
+                "policy_engine": "claude-code",
             }
         ],
     }
+
+
+def test_dt_arms_job_progress_reports_native_search_and_iteration_budget(
+    manager: ExperimentManager,
+):
+    selected = manager.datasets()["items"][0]
+    root = (
+        manager.artifact_root
+        / "dt-arms-run"
+        / selected["domain"]
+        / selected["threat_model"]
+        / selected["risk_category"]
+        / selected["task_id"]
+    )
+    (root / "dt-arms").mkdir(parents=True)
+    (root / "dt-arms/status.json").write_text(
+        json.dumps({"stage": "dt_arms_starting", "max_iterations": 10}),
+        encoding="utf-8",
+    )
+    record = {
+        "artifact_path": str(manager.artifact_root / "dt-arms-run"),
+        "resolved": {
+            "selected_tasks": [selected["path"]],
+            "policy_engine": "dt-arms-upstream",
+            "dt_arms_max_iterations": 10,
+        },
+    }
+
+    progress = manager._job_progress(record)
+
+    assert progress["running"] == 1
+    assert progress["tasks"][0]["stage"] == "DT Arms native search"
+    assert progress["tasks"][0]["h_limit"] is None
+    assert progress["tasks"][0]["iteration_limit"] == 10
+    assert progress["tasks"][0]["policy_engine"] == "dt-arms-upstream"
 
 
 def test_existing_artifact_requires_resume(manager: ExperimentManager, monkeypatch):
