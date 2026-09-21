@@ -3,18 +3,19 @@
 `dt_arena.policy_eval` is the DTAP-owned research runtime for evaluating an
 attack-planning policy against the real DTAP victim + judge stack.
 
-The primary red-team engine is the pinned upstream **DT Arms** implementation.
-Its source lives unchanged under `dt_arms/`; provenance is recorded in
+The default E2E policy engine is the retained **Claude Code CLI** policy-MCP
+control. The pinned upstream **DT Arms** implementation is available as an
+explicit native-engine option. Its source lives unchanged under `dt_arms/`;
+provenance is recorded in
 `dt_arena/policy_eval/dt_arms_snapshot.json`. DT Arms keeps its native task
 access, skills, victim queries, judge feedback, and iterative attack loop. A
 successful generated `attack_result_*.yaml` is then merged into an isolated
 task copy and replayed exactly once through the authoritative DTAP evaluator.
 
-The previous **Claude Code CLI** policy-MCP engine remains available as the
-`claude-code` control. It receives only the DTAP policy MCP surface; native
+The `claude-code` control receives only the DTAP policy MCP surface; native
 Bash/file/web tools are denied.
 
-Execution flow:
+Opt-in DT Arms execution flow:
 
 ```text
 DT Arms upstream-native search
@@ -76,6 +77,12 @@ OpenAI client (`OPENAI_API_KEY` and optional `OPENAI_BASE_URL`),
 Claude uses `ANTHROPIC_API_KEY`. The selected victim harness may require its
 own provider variables as well; OpenClaw uses its existing Anthropic-compatible
 environment. Credentials are never copied into experiment YAML or artifacts.
+The managed viewer maps `OLLAMA_API_KEY` into the DT Arms subprocess through
+`DTAP_ARMS_OPENAI_API_KEY` and uses `${ANTHROPIC_BASE_URL}/v1` as its default
+`DTAP_ARMS_OPENAI_BASE_URL`, preferring `OLLAMA_OPENAI_BASE_URL` when set.
+Direct invocations can set those two DTAP-specific
+variables explicitly. Install native-engine runtime dependencies with
+`pip install -e '.[dt-arms]'`.
 
 The `budgets` section controls three independent limits:
 
@@ -92,8 +99,8 @@ policy:
   engine: dt-arms-upstream
 ```
 
-Use `engine: claude-code` for the retained policy-MCP control. Its MCP contract
-is selected independently from the planning strategy:
+The checked-in experiment template defaults to `engine: claude-code`. Its MCP
+contract is selected independently from the planning strategy:
 
 ```yaml
 policy:

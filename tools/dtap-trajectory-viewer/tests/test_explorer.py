@@ -42,9 +42,22 @@ def test_experiment_ui_has_hierarchical_multi_task_picker():
     assert "writeYamlControl" in app_js
     assert "lazy-schema-v2" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "dt-arms-upstream" in (web / "yaml_controls.js").read_text(encoding="utf-8")
+    assert "experimentControlValue('policy','engine','claude-code')" in app_js
+    controls = (web / "yaml_controls.js").read_text(encoding="utf-8")
+    assert controls.index("['claude-code'") < controls.index("['dt-arms-upstream'")
     assert ".dataset-browser" in css
     assert ".runtime-fields" in css
     assert ".job-task-list" in css
+
+
+def test_managed_viewer_bridges_ollama_for_native_dt_arms():
+    script = (
+        Path(__file__).parents[1] / "scripts" / "serve-managed.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "DTAP_ARMS_OPENAI_API_KEY" in script
+    assert "DTAP_ARMS_OPENAI_BASE_URL" in script
+    assert "OLLAMA_OPENAI_BASE_URL" in script
 
 
 def write_episode(root: Path, domain: str, threat: str, i: int, attack: bool = False) -> Path:

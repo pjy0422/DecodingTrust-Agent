@@ -1,7 +1,7 @@
 export const EXPERIMENT_CONTROL_OPTIONS = Object.freeze({
   policyEngine: Object.freeze([
-    ['dt-arms-upstream','DT Arms upstream · native red-team loop'],
     ['claude-code','Claude Code · legacy policy MCP'],
+    ['dt-arms-upstream','DT Arms upstream · native red-team loop'],
   ]),
   harnessProtocol: Object.freeze([
     ['v1','v1 · frozen six-tool control'],

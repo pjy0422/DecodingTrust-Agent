@@ -115,6 +115,15 @@ pocketflow = [
   "pocketflow==0.0.3",
 ]
 
+# Pinned native DT Arms policy engine. Its skill executor uses the Docker SDK;
+# provider SDKs mirror the untouched upstream routing in utils/llm.py.
+dt-arms = [
+  "anthropic>=0.18.0",
+  "docker>=7.1.0",
+  "openai>=2.6.1",
+  "pocketflow==0.0.3",
+]
+
 # Browser domain deps (playwright, pillow) are now part of the CORE dependencies,
 # so the browser domain works from a plain `pip install decodingtrust-agent-sdk`.
 # This empty extra is kept only so existing `...[browser]` installs don't break.
@@ -122,7 +131,7 @@ browser = []
 
 # Install every framework at once
 all = [
-  "decodingtrust-agent-sdk[openai,claude,google,langchain,pocketflow,strands]",
+  "decodingtrust-agent-sdk[openai,claude,google,langchain,pocketflow,strands,dt-arms]",
 ]
 
 # Development / CI tooling (never shipped to users)

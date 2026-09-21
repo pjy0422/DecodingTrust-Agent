@@ -16,9 +16,9 @@ models:
   victim: deepseek-v4.1-flash
 
 policy:
-  # DT Arms is the primary native red-team engine. Use claude-code for the
-  # retained legacy policy-MCP control.
-  engine: dt-arms-upstream
+  # Claude Code remains the default E2E policy-MCP control. Select
+  # dt-arms-upstream explicitly to run the pinned native red-team loop.
+  engine: claude-code
   planning_strategy: current
   max_turns: auto
   improvement_wishes: true
