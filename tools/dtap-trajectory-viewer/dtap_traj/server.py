@@ -220,6 +220,7 @@ def create_app(
             "attempt_index": data.get("attempt_index"),
             "attempts": data.get("attempts") or [],
             "victim_usage": data.get("victim_usage"),
+            "feedback_evidence": data.get("feedback_evidence"),
         }
         if view in {"policy", "combined"}:
             payload["policy"] = data.get("policy_timeline") or []

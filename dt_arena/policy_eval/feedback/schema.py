@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from enum import Enum
+from collections.abc import Mapping
 from typing import Any, Literal
 
 
@@ -166,3 +167,101 @@ class FeedbackEvidence:
 
 def deterministic_to_dict(value: DeterministicFeedback) -> dict[str, Any]:
     return asdict(value)
+
+
+def _compact_target_state(item: Mapping[str, Any]) -> str:
+    injection_type = item.get("injection_type")
+    if injection_type == "tool":
+        return {True: "called", False: "not_called", None: "unknown"}.get(
+            item.get("polluted_tool_called"), "unknown"
+        )
+    if injection_type == "skill":
+        return {
+            "used": "used",
+            "not_used": "not_used",
+            "unknown": "unknown",
+        }.get(item.get("skill_use_state"), "unknown")
+    if injection_type == "environment":
+        status = item.get("access_call_status")
+        if status in {"error", "incomplete"}:
+            return str(status)
+        return {
+            "accessed": "accessed",
+            "not_accessed": "not_accessed",
+            "unknown": "unknown",
+        }.get(item.get("access_state"), "unknown")
+    return "not_applicable"
+
+
+def compact_feedback_v4(full: Mapping[str, Any]) -> dict[str, Any]:
+    """Project detailed sanitized v3 evidence into the compact policy DTO."""
+
+    deterministic = full.get("deterministic")
+    deterministic = deterministic if isinstance(deterministic, Mapping) else {}
+    digest = full.get("digest")
+    digest = digest if isinstance(digest, Mapping) else {}
+    attributions = digest.get("step_attributions", ())
+    attribution_by_step = {
+        item.get("step_index"): item
+        for item in attributions
+        if isinstance(item, Mapping) and isinstance(item.get("step_index"), int)
+    }
+    steps = []
+    for raw in deterministic.get("injections", ()):
+        if not isinstance(raw, Mapping):
+            continue
+        item: dict[str, Any] = {
+            "step_index": raw.get("step_index"),
+            "injection_type": raw.get("injection_type"),
+            "target_state": _compact_target_state(raw),
+        }
+        for source, target in (
+            ("matched_tool", "matched_tool"),
+            ("evidence_call_indices", "call_indices"),
+            ("unknown_reasons", "unknown_reasons"),
+        ):
+            value = raw.get(source)
+            if value not in (None, (), []):
+                item[target] = value
+        if raw.get("response_match_state") != "not_applicable":
+            item["response_match"] = raw.get("response_match_state", "unknown")
+        if raw.get("presentation_state") != "not_applicable":
+            item["presentation"] = raw.get("presentation_state", "unknown")
+        attribution = attribution_by_step.get(raw.get("step_index"))
+        if attribution is not None:
+            item.update(
+                {
+                    "effect": attribution.get("effect"),
+                    "reason_classes": attribution.get("reason_classes"),
+                    "confidence": attribution.get("confidence"),
+                }
+            )
+        steps.append(item)
+    result: dict[str, Any] = {
+        "schema_version": 4,
+        "final_response": full.get("final_response", ""),
+        "trace_complete": bool(deterministic.get("trace_complete", False)),
+        "tool_sequence": [
+            {"tool": item.get("tool"), "status": item.get("status")}
+            for item in deterministic.get("tool_sequence", ())
+            if isinstance(item, Mapping)
+        ],
+        "steps": steps,
+    }
+    if digest:
+        result["guidance"] = {
+            "diagnosis": digest.get("diagnosis"),
+            "overall_effect": digest.get("payload_effect"),
+            "confidence": digest.get("confidence"),
+            "preserve": digest.get("preserve", ()),
+            "reconsider": digest.get("reconsider", ()),
+        }
+    reasoning = full.get("reasoning_summary")
+    if (
+        isinstance(reasoning, Mapping)
+        and reasoning.get("source") != "unavailable"
+        and isinstance(reasoning.get("summary"), str)
+        and reasoning["summary"].strip()
+    ):
+        result["reasoning_summary"] = dict(reasoning)
+    return result

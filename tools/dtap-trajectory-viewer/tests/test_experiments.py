@@ -200,7 +200,11 @@ def test_api_requires_token_and_launches_worker(monkeypatch, tmp_path: Path):
     response = client.post(
         "/api/experiments/launch",
         headers=headers,
-        json={"run_name": "api-run", "yaml": template["yaml"]},
+        json={
+            "run_name": "api-run",
+            "yaml": template["yaml"],
+            "tasks": [datasets["items"][0]["path"]],
+        },
     )
     assert response.status_code == 202
     job = response.json()
@@ -209,6 +213,38 @@ def test_api_requires_token_and_launches_worker(monkeypatch, tmp_path: Path):
     saved = json.loads((tmp_path / "state/jobs" / job["job_id"] / "job.json").read_text())
     assert saved["run_name"] == "api-run"
     assert client.get("/api/experiments/jobs", headers=headers).json()["items"][0]["job_id"] == job["job_id"]
+
+    selected = datasets["items"][0]
+    task_artifacts = (
+        tmp_path
+        / "artifacts/api-run"
+        / selected["domain"]
+        / selected["threat_model"]
+        / selected["risk_category"]
+        / selected["task_id"]
+    )
+    (task_artifacts / "attempts/attempt-0001").mkdir(parents=True)
+    (task_artifacts / "submitted-config.yaml").write_text("Task: {}\n", encoding="utf-8")
+    detail = client.get(f"/api/experiments/jobs/{job['job_id']}", headers=headers).json()
+    assert detail["progress"] == {
+        "total": 1,
+        "completed": 0,
+        "running": 1,
+        "queued": 0,
+        "failed": 0,
+        "tasks": [
+            {
+                "task": selected["path"],
+                "status": "running",
+                "stage": "victim evaluation",
+                "attempts": 1,
+                "h_limit": 2,
+                "attack_success": None,
+                "episode_status": None,
+                "error": None,
+            }
+        ],
+    }
 
 
 def test_existing_artifact_requires_resume(manager: ExperimentManager, monkeypatch):

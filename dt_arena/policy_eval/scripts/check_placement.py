@@ -57,7 +57,7 @@ async def run(args: argparse.Namespace) -> dict:
             max_actions=1,
         )
         receipt = await placement.apply(step)
-        result = placement.validate(receipt.get("action_id", "")) if receipt.get("accepted") else None
+        result = placement.validate(receipt.get("tool_name", "")) if receipt.get("accepted") else None
         return {
             "step": {key: value for key, value in step.items() if key != "kwargs"},
             "receipt": receipt,

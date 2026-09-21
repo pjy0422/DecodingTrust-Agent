@@ -346,10 +346,7 @@ class SubmissionCoordinator:
                 "terminal": self.runtime.terminal,
                 "remaining_submissions": self.runtime.remaining_submissions,
             }
-            if (
-                self.feedback_builder is not None
-                and result.attack_success is False
-            ):
+            if self.feedback_builder is not None:
                 try:
                     feedback = await self.feedback_builder.build(
                         attempt_root=workspace.output_root,

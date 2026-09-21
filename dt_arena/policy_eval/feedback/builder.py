@@ -12,9 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from ..actions import ValidatedAttackStep
+from ..artifact_contract import FEEDBACK_EVIDENCE
 from .deterministic import ParsedMCPTrace, extract_deterministic_feedback, parse_mcp_events
 from .digestor import Digestor, DigestorObservation, ReasoningSummarizer, validate_repair_digest
-from .schema import FeedbackMode, ReasoningSummaryConfig, deterministic_to_dict
+from .schema import FeedbackMode, ReasoningSummaryConfig, compact_feedback_v4, deterministic_to_dict
 from .victim_trace import build_victim_trace, extract_final_response, load_trajectory, sanitize_trace_value
 
 
@@ -109,6 +110,19 @@ class FeedbackBuilder:
         rendered = json.dumps(metric, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         (target_dir / "research-feedback.json").write_text(rendered, encoding="utf-8")
         (self.research_output_root / "research-feedback.json").write_text(rendered, encoding="utf-8")
+
+    @staticmethod
+    def _retain_full_evidence(attempt_root: Path, result: Mapping[str, Any]) -> None:
+        rendered = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        target = attempt_root / FEEDBACK_EVIDENCE
+        temporary = target.with_suffix(".tmp")
+        temporary.write_text(rendered, encoding="utf-8")
+        temporary.replace(target)
+
+    @classmethod
+    def _finish(cls, attempt_root: Path, result: Mapping[str, Any]) -> dict[str, Any]:
+        cls._retain_full_evidence(attempt_root, result)
+        return compact_feedback_v4(result)
 
     @staticmethod
     def _single_regular_artifact(root: Path, name: str, max_bytes: int) -> Path | None:
@@ -233,10 +247,10 @@ class FeedbackBuilder:
         assert isinstance(final_response, str)
         result: dict[str, Any] = {"schema_version": 3, "final_response": final_response}
         if self.mode is FeedbackMode.FINAL_ONLY:
-            return result
+            return self._finish(attempt_root, result)
         result["deterministic"] = deterministic_to_dict(deterministic)
         if self.mode is not FeedbackMode.FINAL_DETERMINISTIC_DIGESTOR:
-            return result
+            return self._finish(attempt_root, result)
 
         trace = build_victim_trace(
             trajectory,
@@ -278,22 +292,17 @@ class FeedbackBuilder:
             source = trace.reasoning_source
             if source == "disabled":
                 source = "unavailable"
-            if source == "unavailable":
-                result["reasoning_summary"] = {
-                    "source": "unavailable",
-                    "summary": "",
-                }
-                return result
-            try:
-                summary = await asyncio.wait_for(
-                    self.reasoning_summarizer.summarize(trace),
-                    timeout=self.reasoning.timeout_seconds,
-                )
-                if isinstance(summary, str) and summary.strip():
-                    result["reasoning_summary"] = {
-                        "source": source,
-                        "summary": summary[: self.reasoning.max_chars],
-                    }
-            except Exception:
-                pass
-        return result
+            if source != "unavailable":
+                try:
+                    summary = await asyncio.wait_for(
+                        self.reasoning_summarizer.summarize(trace),
+                        timeout=self.reasoning.timeout_seconds,
+                    )
+                    if isinstance(summary, str) and summary.strip():
+                        result["reasoning_summary"] = {
+                            "source": source,
+                            "summary": summary[: self.reasoning.max_chars],
+                        }
+                except Exception:
+                    pass
+        return self._finish(attempt_root, result)

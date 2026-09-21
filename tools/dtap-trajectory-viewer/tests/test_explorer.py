@@ -23,11 +23,18 @@ def test_experiment_ui_has_hierarchical_multi_task_picker():
     css = (web / "app.css").read_text(encoding="utf-8")
 
     assert "/api/experiments/datasets" in app_js
+    assert "syncDatasetSelection" in app_js
     assert "data-dataset-level" in app_js
     assert "data-dataset-task" in app_js
-    assert "Select visible" in app_js
+    assert "Select all IDs" in app_js
+    assert "Clear all IDs" in app_js
+    assert "Select matches" in app_js
     assert "max_parallel" in app_js
+    assert "job-progress-summary" in app_js
+    assert "Task progress updates when Refresh is clicked" in app_js
+    assert "Full feedback evidence" in app_js
     assert ".dataset-browser" in css
+    assert ".job-task-list" in css
 
 
 def write_episode(root: Path, domain: str, threat: str, i: int, attack: bool = False) -> Path:
@@ -325,6 +332,9 @@ def test_h2_attempt_selector_returns_each_config_victim_and_judge(tmp_path):
             json.dumps({"task_success": True, "attack_success": attack, "error": None})
         )
         (attempt / "judge-verdict.json").write_text(json.dumps({"attack_success": attack}))
+        (attempt / "feedback-evidence.json").write_text(
+            json.dumps({"schema_version": 3, "final_response": f"feedback-{index}"})
+        )
 
     client = TestClient(create_app(root, db_path=tmp_path / "h2.sqlite3"))
     episode_id = json.loads((episode / "result.json").read_text())["episode_id"]
@@ -337,6 +347,10 @@ def test_h2_attempt_selector_returns_each_config_victim_and_judge(tmp_path):
     first = client.get(f"/api/episodes/{episode_id}/trajectory", params={"attempt": 1}).json()
     assert any("victim-1" in event.get("text", "") for event in first["victim"])
     assert first["victim_usage"]["input_tokens"] == 100
+    assert first["feedback_evidence"] == {
+        "schema_version": 3,
+        "final_response": "feedback-1",
+    }
     config = client.get(f"/api/episodes/{episode_id}/config", params={"attempt": 1}).json()["comparison"]
     assert "+attempt: 1" in config["diff"]
     judges = client.get(f"/api/episodes/{episode_id}/judges", params={"attempt": 2}).json()["judges"]

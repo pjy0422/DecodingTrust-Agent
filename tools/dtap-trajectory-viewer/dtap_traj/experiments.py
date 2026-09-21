@@ -76,6 +76,14 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 class ExperimentManager:
     """Own templates, validate YAML, and launch durable worker processes.
 
@@ -315,10 +323,84 @@ class ExperimentManager:
         records = []
         for path in sorted(self.jobs_dir.glob("*/job.json"), reverse=True):
             try:
-                records.append(json.loads(path.read_text(encoding="utf-8")))
+                record = json.loads(path.read_text(encoding="utf-8"))
+                record["progress"] = self._job_progress(record)
+                records.append(record)
             except (OSError, json.JSONDecodeError):
                 continue
         return records
+
+    def _job_progress(self, record: dict[str, Any]) -> dict[str, Any]:
+        resolved = record.get("resolved") if isinstance(record.get("resolved"), dict) else {}
+        selected = resolved.get("selected_tasks")
+        root = Path(str(record.get("artifact_path", ""))).resolve()
+        try:
+            root.relative_to(self.artifact_root)
+        except ValueError:
+            return {"total": 0, "completed": 0, "running": 0, "queued": 0, "failed": 0, "tasks": []}
+
+        planned: list[tuple[str, Path]] = []
+        if isinstance(selected, list) and selected:
+            for task in selected:
+                if not isinstance(task, str):
+                    continue
+                parts = Path(task).parts
+                if len(parts) != 5 or parts[1] != "malicious":
+                    continue
+                domain, _, threat, risk, task_id = parts
+                planned.append((task, root / domain / threat / risk / task_id))
+        else:
+            domains = resolved.get("domains", [])
+            threats = resolved.get("threat_models", [])
+            if isinstance(domains, list) and isinstance(threats, list):
+                for domain in domains:
+                    for threat in threats:
+                        if isinstance(domain, str) and isinstance(threat, str):
+                            planned.append(
+                                (f"{domain}/malicious/{threat}/<profile-selected-task>", root / domain / threat)
+                            )
+
+        tasks: list[dict[str, Any]] = []
+        h_limit = resolved.get("max_submissions")
+        for label, task_root in planned:
+            result = _read_json(task_root / "result.json")
+            state = _read_json(task_root / "episode-state.json")
+            attempts_root = task_root / "attempts"
+            attempts = (
+                len([path for path in attempts_root.glob("attempt-*") if path.is_dir()])
+                if attempts_root.is_dir()
+                else 0
+            )
+            if result:
+                status = "completed" if result.get("status") == "passed" else "failed"
+                stage = "attack succeeded" if result.get("attack_success") is True else "evaluation complete"
+            elif state.get("evaluation_delegate_completed"):
+                status, stage = "running", "attempt complete; policy continuing"
+            elif attempts or (task_root / "submitted-config.yaml").is_file():
+                status, stage = "running", "victim evaluation"
+            elif (task_root / "policy.jsonl").is_file() or (task_root / "policy-prompt.txt").is_file():
+                status, stage = "running", "policy planning"
+            elif task_root.is_dir():
+                status, stage = "running", "starting"
+            else:
+                status, stage = "queued", "waiting for worker"
+            tasks.append(
+                {
+                    "task": label,
+                    "status": status,
+                    "stage": stage,
+                    "attempts": attempts,
+                    "h_limit": h_limit,
+                    "attack_success": result.get("attack_success"),
+                    "episode_status": result.get("episode_status") or state.get("status"),
+                    "error": result.get("error_tail") or result.get("error"),
+                }
+            )
+        counts = {
+            status: sum(task["status"] == status for task in tasks)
+            for status in ("completed", "running", "queued", "failed")
+        }
+        return {"total": len(tasks), **counts, "tasks": tasks}
 
     def job(self, job_id: str) -> dict[str, Any]:
         if not re.fullmatch(r"[0-9TZ-]+[a-f0-9]{8}", job_id):
@@ -327,6 +409,7 @@ class ExperimentManager:
         if not path.is_file():
             raise ExperimentLaunchError("experiment job not found")
         record = json.loads(path.read_text(encoding="utf-8"))
+        record["progress"] = self._job_progress(record)
         chunks = []
         for name in ("worker-bootstrap.log", "runner.log"):
             log_path = self.jobs_dir / job_id / name

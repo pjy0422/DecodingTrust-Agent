@@ -215,12 +215,12 @@ class M4EpisodeService:
             raise EpisodeAccessError("unauthorized episode")
         return await authority.placement_coordinator.apply(step, depends_on=depends_on)
 
-    def validate_placement(self, token: str, action_id: Any) -> dict[str, Any]:
+    def validate_placement(self, token: str, tool_name: Any) -> dict[str, Any]:
         authority = self.registry.resolve(token)
         authority.mcp_calls.record("validate_placement")
         if authority.placement_coordinator is None:
             raise EpisodeAccessError("unauthorized episode")
-        return authority.placement_coordinator.validate(action_id)
+        return authority.placement_coordinator.validate(tool_name)
 
 
 def create_core_policy_mcp_server(
@@ -309,9 +309,9 @@ def create_policy_mcp_server(
         return await service.apply_attack_step(token(), step, depends_on)
 
     @mcp.tool
-    def validate_placement(action_id: str) -> dict:
-        """Read placement evidence only for an action applied by this episode."""
-        return service.validate_placement(token(), action_id)
+    def validate_placement(tool_name: str) -> dict:
+        """Read placement evidence for this episode's pending application of one qualified tool."""
+        return service.validate_placement(token(), tool_name)
 
     @mcp.tool
     async def submit_attack(plan: dict[str, Any]) -> dict:
