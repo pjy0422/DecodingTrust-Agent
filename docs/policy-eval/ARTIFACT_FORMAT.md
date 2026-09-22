@@ -49,3 +49,6 @@ viewer adapter generated from that file. The generated attack is retained as
 `dt-arms/attack-result.yaml`. If candidate generation succeeds, the ordinary
 top-level and `attempts/attempt-0001/` victim/judge artifacts contain the one
 fresh authoritative DTAP replay, not one of DT Arms' internal scouting runs.
+The native structured `verifiable_judge`/`feedback_judge` steps are additionally
+retained as `dt-arms/judge-history.json`. They are search evidence and must not
+be substituted for that authoritative replay verdict or included in ASR.

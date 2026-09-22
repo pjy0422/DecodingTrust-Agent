@@ -10,12 +10,14 @@ import yaml
 from dt_arena.policy_eval.dt_arms_integration import (
     DtArmsIntegrationError,
     discover_generation_artifacts,
+    extract_dt_arms_judge_history,
     merge_generated_attack,
     materialize_replay_workspace,
     normalize_dt_arms_trajectory,
     snapshot_content_sha256,
     snapshot_provenance,
     task_identity,
+    write_dt_arms_judge_history,
     write_task_list,
 )
 from dt_arena.policy_eval.scripts import run_dt_arms_e2e
@@ -138,6 +140,57 @@ def test_raw_dt_arms_trajectory_is_normalized_only_for_viewer(tmp_path: Path) ->
         "success": False,
         "type": "result",
     }
+
+
+def test_native_judges_are_extracted_as_non_authoritative_search_history(tmp_path: Path) -> None:
+    raw = {
+        "attack_config": {"judge_model": "judge-model"},
+        "attack_trajectory": [
+            {
+                "step_id": 5,
+                "role": "verifiable_judge",
+                "state": {"attack": False, "task": True},
+                "metadata": {
+                    "attack": {"success": False, "explanation": "blocked"},
+                    "task": {"success": True, "explanation": "completed"},
+                },
+            },
+            {
+                "step_id": 6,
+                "role": "feedback_judge",
+                "state": False,
+                "metadata": {
+                    "failure_reason": "payload was rejected",
+                    "improvement_suggestions": "use a reached surface",
+                },
+            },
+        ],
+    }
+    source = tmp_path / "trajectory.json"
+    destination = tmp_path / "judge-history.json"
+    source.write_text(json.dumps(raw), encoding="utf-8")
+
+    history = extract_dt_arms_judge_history(source)
+    assert history["authoritative_replay"] is False
+    assert history["judge_model"] == "judge-model"
+    assert history["iterations"] == [
+        {
+            "iteration": 1,
+            "verifiable": {
+                "step_id": 5,
+                "attack_success": False,
+                "task_success": True,
+                "metadata": raw["attack_trajectory"][0]["metadata"],
+            },
+            "feedback": {
+                "step_id": 6,
+                "attack_success": False,
+                "metadata": raw["attack_trajectory"][1]["metadata"],
+            },
+        }
+    ]
+    write_dt_arms_judge_history(source, destination)
+    assert json.loads(destination.read_text(encoding="utf-8")) == history
 
 
 def test_dt_arms_openai_provider_adapter_is_process_local(

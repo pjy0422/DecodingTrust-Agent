@@ -59,6 +59,9 @@ The UI opens at `http://127.0.0.1:8765` by default and supports:
   new digestor/reasoning request snapshots without reconstructing missing
   historical prompts from current source,
 - DTAP task/attack judge results with deterministic and LLM-as-judge labels,
+- DT Arms native `verifiable_judge` and `feedback_judge` history, parsed from
+  structured trajectory steps and explicitly labeled as search evidence rather
+  than the authoritative fresh-replay verdict,
 - the trusted reward-firewall verdict kept separate from raw judge metadata,
 - original/submitted Config Diff,
 - server-side pagination,

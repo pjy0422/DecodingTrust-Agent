@@ -24,6 +24,7 @@ from dt_arena.policy_eval.dt_arms_integration import (
     replay_candidate,
     snapshot_provenance,
     task_identity,
+    write_dt_arms_judge_history,
     write_task_list,
 )
 
@@ -237,6 +238,7 @@ async def _run(args: argparse.Namespace) -> int:
         shutil.copy2(trajectory_path, raw_trajectory)
         try:
             normalize_dt_arms_trajectory(raw_trajectory, artifacts / "policy.jsonl")
+            write_dt_arms_judge_history(raw_trajectory, generation / "judge-history.json")
         except (DtArmsIntegrationError, OSError, ValueError) as exc:
             _stage(generation, "pipeline_error", error=str(exc))
             _emit(

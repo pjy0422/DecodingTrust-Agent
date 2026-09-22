@@ -331,13 +331,31 @@ function judgeCard(component){
     ? `<details><summary>Judge metadata</summary><pre>${esc(JSON.stringify(component.metadata,null,2))}</pre></details>`:'';
   return `<article class="judge-card copy-block"><div class="judge-head"><h3>${esc(component.name)} judge</h3><span class="judge-source ${esc(component.source)}">${source}</span><span class="judge-outcome ${outcomeClass}">${esc(outcome)}</span><button type="button" class="copy-button" data-copy-block>Copy</button></div><div data-copy-content>${component.message?`<div class="judge-message">${esc(component.message)}</div>`:''}${metadata}</div></article>`;
 }
+function nativeJudgeBadge(label,value){
+  const known=value===true||value===false;
+  return `<span class="judge-outcome ${known?(value?'ok':'bad'):'neutral'}">${esc(label)} ${known?(value?'succeeded':'failed'):'unknown'}</span>`;
+}
+function dtArmsJudgeHistoryHtml(history){
+  const iterations=history?.iterations||[];
+  if(!iterations.length)return '';
+  const cards=iterations.map(item=>{
+    const verifiable=item.verifiable||{};const feedback=item.feedback||{};const detail=feedback.metadata||{};
+    const failure=detail.failure_reason?`<div class="native-feedback"><b>Failure analysis</b><p>${esc(detail.failure_reason)}</p></div>`:'';
+    const suggestions=detail.improvement_suggestions?`<div class="native-feedback"><b>Improvement suggestions</b><p>${esc(detail.improvement_suggestions)}</p></div>`:'';
+    const raw={verifiable,feedback:item.feedback};
+    return `<article class="judge-card native-judge copy-block"><div class="judge-head"><h3>Native iteration H=${esc(item.iteration)}</h3>${nativeJudgeBadge('attack',verifiable.attack_success)}${nativeJudgeBadge('task',verifiable.task_success)}${item.feedback?'<span class="judge-source llm_as_judge">feedback generated</span>':''}<button type="button" class="copy-button" data-copy-block>Copy</button></div><div data-copy-content>${failure}${suggestions}<details><summary>Raw structured judge evidence</summary><pre>${esc(JSON.stringify(raw,null,2))}</pre></details></div></article>`;
+  }).join('');
+  const model=history.judge_model?` · ${esc(history.judge_model)}`:'';
+  return `<section class="native-judge-history"><div class="native-judge-title"><div><h3>DT Arms native search judges</h3><p>Structured verifiable and feedback judges from DT Arms${model}.</p></div><span>search evidence · not authoritative replay</span></div>${cards}</section>`;
+}
 function judgesHtml(judges){
   if(!judges||!judges.available) return '<div class="empty">No DTAP judge artifacts found.</div>';
   const cards=(judges.components||[]).map(judgeCard).join('');
   const firewall=judges.reward_firewall&&Object.keys(judges.reward_firewall).length
     ? `<article class="judge-card firewall copy-block"><div class="judge-head"><h3>Reward firewall verdict</h3><span class="judge-source trusted">Trusted projection</span><button type="button" class="copy-button" data-copy-block>Copy</button></div><pre data-copy-content>${esc(JSON.stringify(judges.reward_firewall,null,2))}</pre></article>`:'';
   const error=judges.error?`<article class="judge-card error copy-block"><div class="judge-head"><h3>Judge error</h3><button type="button" class="copy-button" data-copy-block>Copy</button></div><div class="judge-message" data-copy-content>${esc(judges.error)}</div></article>`:'';
-  return `<div class="judges">${cards}${firewall}${error}</div>`;
+  const nativeHistory=dtArmsJudgeHistoryHtml(judges.dt_arms_history);
+  return `<div class="judges">${cards}${firewall}${nativeHistory}${error}</div>`;
 }
 function promptCard(component){
   const role=component.role==='system'?'system':'user';
