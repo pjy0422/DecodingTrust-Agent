@@ -21,6 +21,7 @@ EPISODE_STATE = "episode-state.json"
 RESULT = "result.json"
 RESEARCH_FEEDBACK = "research-feedback.json"
 FEEDBACK_EVIDENCE = "feedback-evidence.json"
+PROMPT_SNAPSHOTS = "prompt-snapshots.jsonl"
 
 
 @dataclass(frozen=True)

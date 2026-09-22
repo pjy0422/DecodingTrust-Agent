@@ -7,6 +7,7 @@ import json
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -154,7 +155,7 @@ class AnthropicMessagesJSONCompleter:
 class PromptedReasoningSummarizer:
     """Independent opt-in summarizer sharing only the configured provider."""
 
-    def __init__(self, complete: AnthropicMessagesJSONCompleter) -> None:
+    def __init__(self, complete: Callable[[str], Awaitable[Any] | Any]) -> None:
         self.complete = complete
 
     async def summarize(self, trace: VictimVisibleTrace) -> str:

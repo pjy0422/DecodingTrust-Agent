@@ -246,6 +246,15 @@ def create_app(
             raise HTTPException(404, str(exc)) from None
         return {"episode": item, "judges": data.get("judges")}
 
+    @app.get("/api/episodes/{episode_id}/prompts")
+    def prompts(episode_id: str, attempt: int | None = Query(None, ge=1)):
+        item = episode_or_404(episode_id)
+        try:
+            data = load_episode_bundle(artifact_dir_or_404(item), attempt_index=attempt)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from None
+        return {"episode": item, "prompts": data.get("prompts")}
+
     @app.get("/api/tuning/facets")
     def tuning_facets():
         return db.tuning_facets()

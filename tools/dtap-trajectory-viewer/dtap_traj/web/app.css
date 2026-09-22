@@ -179,6 +179,21 @@ button { color: inherit; }
 .submitted-yaml { margin:0; white-space:pre; overflow:auto; font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--code-bg); border:1px solid var(--line); padding:14px; border-radius:10px; color:var(--body-text); }
 .diff .add { color:#86efac; } .diff .del { color:#fda4af; } .diff .hdr { color:#93c5fd; }
 .judges { display:grid; gap:12px; }
+.prompts { display:grid; gap:12px; }
+.prompt-note { margin:0 0 12px; padding:10px 12px; border:1px solid var(--line); border-radius:9px; background:var(--metric-bg); color:var(--muted); font-size:10px; line-height:1.5; }
+.prompt-card { min-width:0; border:1px solid var(--event-border); border-radius:10px; background:var(--event-bg); padding:14px; }
+.prompt-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.prompt-head > div { margin-right:auto; min-width:180px; }
+.prompt-head h3,.prompt-unavailable h3 { margin:0; font-size:12px; }
+.prompt-head p,.prompt-unavailable p { margin:4px 0 0; color:var(--muted); font-size:9px; overflow-wrap:anywhere; }
+.prompt-role,.prompt-exact,.prompt-unavailable > span { border:1px solid var(--line); border-radius:999px; padding:3px 7px; font-size:9px; font-weight:700; }
+.prompt-role.system { color:var(--violet); border-color:#514376; }
+.prompt-role.user { color:var(--accent); border-color:#31576b; }
+.prompt-exact { color:var(--green); }
+.prompt-card pre { margin:12px 0 0; padding:12px; max-height:560px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--code-bg); border:1px solid var(--line); border-radius:8px; color:var(--tool-text); font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+.prompt-unavailable { display:flex; align-items:center; gap:12px; padding:12px 14px; border:1px dashed var(--line); border-radius:10px; color:var(--muted); }
+.prompt-unavailable > div { flex:1; }
+.prompt-unavailable > span { white-space:nowrap; color:var(--muted); }
 .attemptbar { display:flex; align-items:center; gap:10px; margin:0 0 12px; padding:10px 12px; border:1px solid var(--line); border-radius:9px; background:var(--metric-bg); color:var(--muted); font-size:10px; }
 .attemptbar label { color:var(--attempt-label); font-weight:700; }
 .attemptbar select { background:var(--control-bg); color:var(--attempt-label); border:1px solid var(--line); border-radius:6px; padding:5px 8px; }
