@@ -250,7 +250,7 @@ def normalize_dt_arms_trajectory(source: Path | str, destination: Path | str) ->
 
 
 def extract_dt_arms_judge_history(source: Path | str) -> dict[str, Any]:
-    """Extract structured native search judges without treating them as replay verdicts."""
+    """Extract each native victim execution together with its DT Arms judges."""
 
     try:
         payload = json.loads(Path(source).read_text(encoding="utf-8"))
@@ -262,19 +262,28 @@ def extract_dt_arms_judge_history(source: Path | str) -> dict[str, Any]:
     config = payload.get("attack_config") if isinstance(payload.get("attack_config"), dict) else {}
     iterations: list[dict[str, Any]] = []
     pending: dict[str, Any] | None = None
+    pending_victim: dict[str, Any] | None = None
     for step in steps:
         if not isinstance(step, dict):
             continue
         role = step.get("role")
         state = step.get("state")
         metadata = step.get("metadata") if isinstance(step.get("metadata"), dict) else {}
-        if role == "verifiable_judge" and isinstance(state, dict):
+        if role == "victim":
+            trajectory = metadata.get("victim_trajectory")
+            pending_victim = {
+                "step_id": step.get("step_id"),
+                "final_response": state if isinstance(state, str) else None,
+                "trajectory": trajectory if isinstance(trajectory, list) else [],
+            }
+        elif role == "verifiable_judge" and isinstance(state, dict):
             attack = state.get("attack")
             task = state.get("task")
             if not isinstance(attack, bool) and not isinstance(task, bool):
                 continue
             pending = {
                 "iteration": len(iterations) + 1,
+                "victim": pending_victim,
                 "verifiable": {
                     "step_id": step.get("step_id"),
                     "attack_success": attack if isinstance(attack, bool) else None,
@@ -284,6 +293,7 @@ def extract_dt_arms_judge_history(source: Path | str) -> dict[str, Any]:
                 "feedback": None,
             }
             iterations.append(pending)
+            pending_victim = None
         elif role == "feedback_judge" and pending is not None and pending["feedback"] is None:
             pending["feedback"] = {
                 "step_id": step.get("step_id"),
@@ -294,11 +304,42 @@ def extract_dt_arms_judge_history(source: Path | str) -> dict[str, Any]:
             }
     return {
         "schema": "dtap-policy-eval-dt-arms-judge-history",
-        "schema_version": 1,
+        "schema_version": 2,
         "source": "dt-arms-upstream",
         "authoritative_replay": False,
+        "native_attempts_evaluated": bool(iterations),
         "judge_model": config.get("judge_model"),
         "iterations": iterations,
+    }
+
+
+def summarize_dt_arms_judge_history(history: dict[str, Any]) -> dict[str, Any]:
+    """Project native iteration verdicts into ordinary episode result fields."""
+
+    iterations = history.get("iterations")
+    if not isinstance(iterations, list):
+        iterations = []
+    attack_outcomes: list[bool] = []
+    task_outcomes: list[bool] = []
+    for item in iterations:
+        if not isinstance(item, dict):
+            continue
+        verdict = item.get("verifiable")
+        if not isinstance(verdict, dict):
+            continue
+        attack = verdict.get("attack_success")
+        task = verdict.get("task_success")
+        if isinstance(attack, bool):
+            attack_outcomes.append(attack)
+        if isinstance(task, bool):
+            task_outcomes.append(task)
+    return {
+        "evaluation_completed": bool(attack_outcomes),
+        "attack_success": any(attack_outcomes) if attack_outcomes else None,
+        "task_success": task_outcomes[-1] if task_outcomes else None,
+        "submissions": len(attack_outcomes),
+        "victim_completed": bool(attack_outcomes),
+        "judge_completed": bool(attack_outcomes),
     }
 
 

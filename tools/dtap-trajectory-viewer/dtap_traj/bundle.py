@@ -9,7 +9,13 @@ from typing import Any
 import yaml
 
 from .indexer import normalize_usage
-from .parser import build_timeline, find_policy_trace, find_victim_mcp_events, find_victim_trace
+from .parser import (
+    build_timeline,
+    find_policy_trace,
+    find_victim_mcp_events,
+    find_victim_trace,
+    parse_dtap_trajectory_steps,
+)
 
 
 def _first(root: Path, names: tuple[str, ...]) -> Path | None:
@@ -249,30 +255,35 @@ def _judge_component(result: dict[str, Any], name: str) -> dict[str, Any] | None
 
 def _dt_arms_judge_history(root: Path) -> dict[str, Any]:
     retained = _read_json(root / "dt-arms" / "judge-history.json")
-    if retained.get("schema") == "dtap-policy-eval-dt-arms-judge-history" and isinstance(
-        retained.get("iterations"), list
-    ):
-        return retained
     trajectory = _read_json(root / "dt-arms" / "trajectory.json")
     steps = trajectory.get("attack_trajectory")
     if not isinstance(steps, list):
-        return {}
+        return retained if isinstance(retained.get("iterations"), list) else {}
     config = trajectory.get("attack_config") if isinstance(trajectory.get("attack_config"), dict) else {}
     iterations: list[dict[str, Any]] = []
     pending: dict[str, Any] | None = None
+    pending_victim: dict[str, Any] | None = None
     for step in steps:
         if not isinstance(step, dict):
             continue
         role = step.get("role")
         state = step.get("state")
         metadata = step.get("metadata") if isinstance(step.get("metadata"), dict) else {}
-        if role == "verifiable_judge" and isinstance(state, dict):
+        if role == "victim":
+            victim_trajectory = metadata.get("victim_trajectory")
+            pending_victim = {
+                "step_id": step.get("step_id"),
+                "final_response": state if isinstance(state, str) else None,
+                "trajectory": victim_trajectory if isinstance(victim_trajectory, list) else [],
+            }
+        elif role == "verifiable_judge" and isinstance(state, dict):
             attack = state.get("attack")
             task = state.get("task")
             if not isinstance(attack, bool) and not isinstance(task, bool):
                 continue
             pending = {
                 "iteration": len(iterations) + 1,
+                "victim": pending_victim,
                 "verifiable": {
                     "step_id": step.get("step_id"),
                     "attack_success": attack if isinstance(attack, bool) else None,
@@ -282,6 +293,7 @@ def _dt_arms_judge_history(root: Path) -> dict[str, Any]:
                 "feedback": None,
             }
             iterations.append(pending)
+            pending_victim = None
         elif role == "feedback_judge" and pending is not None and pending["feedback"] is None:
             pending["feedback"] = {
                 "step_id": step.get("step_id"),
@@ -292,9 +304,10 @@ def _dt_arms_judge_history(root: Path) -> dict[str, Any]:
         return {}
     return {
         "schema": "dtap-policy-eval-dt-arms-judge-history",
-        "schema_version": 1,
+        "schema_version": 2,
         "source": "dt-arms-upstream",
         "authoritative_replay": False,
+        "native_attempts_evaluated": True,
         "judge_model": config.get("judge_model"),
         "iterations": iterations,
     }
@@ -338,13 +351,26 @@ def _attempt_directories(root: Path) -> list[tuple[int, Path]]:
 def load_episode_bundle(path: str | Path, *, attempt_index: int | None = None) -> dict[str, Any]:
     root = Path(path).expanduser().resolve()
     attempt_directories = _attempt_directories(root)
-    if attempt_index is not None and not any(index == attempt_index for index, _ in attempt_directories):
+    native_history = _dt_arms_judge_history(root) if not attempt_directories else {}
+    native_iterations = native_history.get("iterations") if isinstance(native_history, dict) else []
+    if not isinstance(native_iterations, list):
+        native_iterations = []
+    available_indexes = [index for index, _ in attempt_directories] or [
+        item.get("iteration") for item in native_iterations if isinstance(item, dict)
+    ]
+    if attempt_index is not None and attempt_index not in available_indexes:
         raise ValueError(f"attempt {attempt_index} not found")
-    selected_index, selected_root = (
-        next(item for item in attempt_directories if item[0] == attempt_index)
-        if attempt_index is not None
-        else (attempt_directories[-1] if attempt_directories else (None, root))
-    )
+    if attempt_directories:
+        selected_index, selected_root = (
+            next(item for item in attempt_directories if item[0] == attempt_index)
+            if attempt_index is not None
+            else attempt_directories[-1]
+        )
+    else:
+        selected_index = attempt_index or (
+            native_iterations[-1].get("iteration") if native_iterations else None
+        )
+        selected_root = root
     victim = find_victim_trace(selected_root)
     victim_payload = _read_json(victim)
     policy = find_policy_trace(root)
@@ -366,6 +392,22 @@ def load_episode_bundle(path: str | Path, *, attempt_index: int | None = None) -
         submitted_yaml_path=submitted,
         victim_mcp_events_path=mcp,
     )
+    selected_native = next(
+        (
+            item
+            for item in native_iterations
+            if isinstance(item, dict) and item.get("iteration") == selected_index
+        ),
+        None,
+    )
+    if isinstance(selected_native, dict):
+        native_victim = selected_native.get("victim")
+        if isinstance(native_victim, dict):
+            native_timeline = parse_dtap_trajectory_steps(native_victim.get("trajectory"))
+            final_response = native_victim.get("final_response")
+            if not native_timeline and isinstance(final_response, str) and final_response:
+                native_timeline = [{"kind": "final", "text": final_response}]
+            data["timeline"] = native_timeline
     result = _read_json(_first(root, ("result.json",)))
     judges = load_judge_results(selected_root, episode_root=root)
     feedback_evidence = _read_json(_first(selected_root, ("feedback-evidence.json",)))
@@ -398,6 +440,17 @@ def load_episode_bundle(path: str | Path, *, attempt_index: int | None = None) -
     if "attack_success" not in evaluation and isinstance(attack_success, bool):
         evaluation["attack_success"] = attack_success
         evaluation.setdefault("evaluation_completed", True)
+    if isinstance(selected_native, dict):
+        native_verdict = selected_native.get("verifiable")
+        if isinstance(native_verdict, dict):
+            native_attack = native_verdict.get("attack_success")
+            native_task = native_verdict.get("task_success")
+            if isinstance(native_attack, bool):
+                evaluation["attack_success"] = native_attack
+                evaluation["evaluation_completed"] = True
+            if isinstance(native_task, bool):
+                evaluation["task_success"] = native_task
+            evaluation["evaluation_source"] = "dt-arms-native-verifiable-judge"
     if judges["raw"]:
         evaluation["judge"] = judges["raw"]
     elif judges["reward_firewall"]:
@@ -425,4 +478,16 @@ def load_episode_bundle(path: str | Path, *, attempt_index: int | None = None) -
         }
         for index, directory in attempt_directories
     ]
+    if not attempt_directories:
+        data["attempts"] = [
+            {
+                "index": item.get("iteration"),
+                "attack_success": (item.get("verifiable") or {}).get("attack_success"),
+                "task_success": (item.get("verifiable") or {}).get("task_success"),
+                "kind": "dt-arms-native",
+            }
+            for item in native_iterations
+            if isinstance(item, dict) and isinstance(item.get("iteration"), int)
+        ]
+    data["attempt_kind"] = "dt-arms-native" if native_iterations and not attempt_directories else "submission"
     return data

@@ -219,6 +219,7 @@ def create_app(
             "warnings": data.get("trajectory_warnings") or [],
             "attempt_index": data.get("attempt_index"),
             "attempts": data.get("attempts") or [],
+            "attempt_kind": data.get("attempt_kind"),
             "victim_usage": data.get("victim_usage"),
             "feedback_evidence": data.get("feedback_evidence"),
         }

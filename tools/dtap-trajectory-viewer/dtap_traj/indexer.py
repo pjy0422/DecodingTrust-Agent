@@ -278,7 +278,64 @@ def _attack_outcome(path: Path) -> bool | None:
     return None
 
 
-def _attempt_outcomes(path: Path, result: dict[str, Any]) -> tuple[int, bool | None, bool | None]:
+def _native_dt_arms_attempts(path: Path) -> list[dict[str, Any]]:
+    """Read evaluated native attempts, preferring raw data for legacy backfill."""
+
+    trajectory = _json(path / "dt-arms" / "trajectory.json")
+    steps = trajectory.get("attack_trajectory")
+    attempts: list[dict[str, Any]] = []
+    pending_victim_events: int | None = None
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            role = step.get("role")
+            metadata = step.get("metadata") if isinstance(step.get("metadata"), dict) else {}
+            if role == "victim":
+                victim_trajectory = metadata.get("victim_trajectory")
+                pending_victim_events = len(victim_trajectory) if isinstance(victim_trajectory, list) else 1
+                continue
+            state = step.get("state")
+            if role != "verifiable_judge" or not isinstance(state, dict):
+                continue
+            attack = state.get("attack")
+            task = state.get("task")
+            if not isinstance(attack, bool) and not isinstance(task, bool):
+                continue
+            attempts.append(
+                {
+                    "attack_success": attack if isinstance(attack, bool) else None,
+                    "task_success": task if isinstance(task, bool) else None,
+                    "victim_events": pending_victim_events,
+                }
+            )
+            pending_victim_events = None
+        return attempts
+
+    history = _json(path / "dt-arms" / "judge-history.json")
+    for item in history.get("iterations", []) if isinstance(history.get("iterations"), list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("verifiable"), dict):
+            continue
+        verdict = item["verifiable"]
+        attack = verdict.get("attack_success")
+        task = verdict.get("task_success")
+        if not isinstance(attack, bool) and not isinstance(task, bool):
+            continue
+        victim = item.get("victim") if isinstance(item.get("victim"), dict) else {}
+        victim_trajectory = victim.get("trajectory")
+        attempts.append(
+            {
+                "attack_success": attack if isinstance(attack, bool) else None,
+                "task_success": task if isinstance(task, bool) else None,
+                "victim_events": len(victim_trajectory) if isinstance(victim_trajectory, list) else None,
+            }
+        )
+    return attempts
+
+
+def _attempt_outcomes(
+    path: Path, result: dict[str, Any]
+) -> tuple[int, bool | None, bool | None, list[dict[str, Any]]]:
     attempts: dict[int, bool | None] = {}
     attempts_root = path / "attempts"
     if attempts_root.is_dir():
@@ -290,14 +347,20 @@ def _attempt_outcomes(path: Path, result: dict[str, Any]) -> tuple[int, bool | N
             except ValueError:
                 continue
             attempts[index] = _attack_outcome(candidate)
-    if not attempts:
+    native_attempts = _native_dt_arms_attempts(path) if not attempts else []
+    if native_attempts:
+        attempts = {
+            index: item.get("attack_success")
+            for index, item in enumerate(native_attempts, 1)
+        }
+    elif not attempts:
         submissions = _number(result.get("submissions")) or 0
         latest = result.get("attack_success")
         if submissions == 1 and isinstance(latest, bool):
             attempts[1] = latest
         elif submissions >= 2 and isinstance(latest, bool):
             attempts[submissions] = latest
-    return len(attempts), attempts.get(1), attempts.get(2)
+    return len(attempts), attempts.get(1), attempts.get(2), native_attempts
 
 
 def _dataset_path(merged: dict[str, Any], domain: Any, threat_model: Any) -> str | None:
@@ -359,6 +422,8 @@ def _source_mtime_ns(path: Path, *extra_paths: Path | None) -> int:
     for pattern in (
         "attempts/attempt-*/judge-verdict.json",
         "attempts/attempt-*/.m4-verdict.json",
+        "dt-arms/trajectory.json",
+        "dt-arms/judge-history.json",
     ):
         for target in path.glob(pattern):
             try:
@@ -384,8 +449,18 @@ def extract_episode_metadata(
     victim_task_id, victim_trace_model, victim_trace_agent_type, victim_usage = (
         _victim_trace_metadata(path / "victim-trajectory.json")
     )
-    attempt_count, h1_attack_success, h2_attack_success = _attempt_outcomes(path, result)
+    attempt_count, h1_attack_success, h2_attack_success, native_attempts = _attempt_outcomes(path, result)
     attack_success = result.get("attack_success")
+    if native_attempts:
+        known_native_attacks = [
+            item["attack_success"]
+            for item in native_attempts
+            if isinstance(item.get("attack_success"), bool)
+        ]
+        if known_native_attacks:
+            attack_success = any(known_native_attacks)
+            merged["attack_success"] = attack_success
+            merged["evaluation_completed"] = True
     if not isinstance(attack_success, bool):
         attack_success = _attack_outcome(path)
     if not isinstance(attack_success, bool):
@@ -465,7 +540,15 @@ def extract_episode_metadata(
         "placements_verified": merged.get("placements_verified"),
         "environment_steps": merged.get("environment_steps"),
         "policy_events": policy_events,
-        "victim_events": _victim_count(path / "victim-trajectory.json") if include_event_counts else None,
+        "victim_events": (
+            (
+                native_attempts[-1].get("victim_events")
+                if native_attempts
+                else _victim_count(path / "victim-trajectory.json")
+            )
+            if include_event_counts
+            else None
+        ),
         "artifact_path": str(path),
         "source_mtime_ns": _source_mtime_ns(path, run_summary_path),
     }
