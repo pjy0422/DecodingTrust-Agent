@@ -7,12 +7,14 @@ import json
 import re
 import stat
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..actions import ValidatedAttackStep
 from ..artifact_contract import FEEDBACK_EVIDENCE
+from ..prompt_snapshots import PromptSnapshotWriter
 from .deterministic import ParsedMCPTrace, extract_deterministic_feedback, parse_mcp_events
 from .digestor import Digestor, DigestorObservation, ReasoningSummarizer, validate_repair_digest
 from .providers import DigestorProviderError
@@ -40,6 +42,7 @@ class FeedbackBuilder:
         reasoning: ReasoningSummaryConfig | None = None,
         limits: FeedbackBuildLimits | None = None,
         research_output_root: Path | None = None,
+        prompt_snapshot_writer: PromptSnapshotWriter | None = None,
     ) -> None:
         reasoning = reasoning or ReasoningSummaryConfig()
         limits = limits or FeedbackBuildLimits()
@@ -55,6 +58,12 @@ class FeedbackBuilder:
         self.reasoning = reasoning
         self.limits = limits
         self.research_output_root = research_output_root
+        self.prompt_snapshot_writer = prompt_snapshot_writer
+
+    @staticmethod
+    def _attempt_index(attempt_root: Path) -> int | None:
+        match = re.fullmatch(r"attempt-([0-9]{4})", attempt_root.parent.name)
+        return int(match.group(1)) if match else None
 
     def _write_surface_mismatch_metric(
         self,
@@ -313,46 +322,52 @@ class FeedbackBuilder:
         )
         assert isinstance(digest_submission, Mapping)
         observation = DigestorObservation(3, digest_submission, deterministic, trace, final_response)
-        validated_digest = None
-        try:
-            raw_digest = await asyncio.wait_for(
-                self.digestor.digest(observation),
-                timeout=self.limits.digest_timeout_seconds,
-            )
-            validated_digest = validate_repair_digest(
-                raw_digest,
-                submitted_plan,
-                deterministic=deterministic,
-                final_response=final_response,
-            )
-            result["digest"] = validated_digest.to_dict()
-        except Exception as error:
-            # Optional-analysis timeout/failure cannot alter an already-recorded attempt.
-            result["digestor_diagnostic"] = {
-                "status": "failed",
-                "code": self._digestor_failure_code(error),
-            }
+        prompt_context = (
+            self.prompt_snapshot_writer.attempt(self._attempt_index(attempt_root))
+            if self.prompt_snapshot_writer is not None
+            else nullcontext()
+        )
+        with prompt_context:
+            validated_digest = None
+            try:
+                raw_digest = await asyncio.wait_for(
+                    self.digestor.digest(observation),
+                    timeout=self.limits.digest_timeout_seconds,
+                )
+                validated_digest = validate_repair_digest(
+                    raw_digest,
+                    submitted_plan,
+                    deterministic=deterministic,
+                    final_response=final_response,
+                )
+                result["digest"] = validated_digest.to_dict()
+            except Exception as error:
+                # Optional-analysis timeout/failure cannot alter an already-recorded attempt.
+                result["digestor_diagnostic"] = {
+                    "status": "failed",
+                    "code": self._digestor_failure_code(error),
+                }
+            if self.reasoning.enabled:
+                assert self.reasoning_summarizer is not None
+                source = trace.reasoning_source
+                if source == "disabled":
+                    source = "unavailable"
+                if source != "unavailable":
+                    try:
+                        summary = await asyncio.wait_for(
+                            self.reasoning_summarizer.summarize(trace),
+                            timeout=self.reasoning.timeout_seconds,
+                        )
+                        if isinstance(summary, str) and summary.strip():
+                            result["reasoning_summary"] = {
+                                "source": source,
+                                "summary": summary[: self.reasoning.max_chars],
+                            }
+                    except Exception:
+                        pass
         self._write_surface_mismatch_metric(
             attempt_root=attempt_root,
             deterministic=deterministic,
             digest=validated_digest,
         )
-        if self.reasoning.enabled:
-            assert self.reasoning_summarizer is not None
-            source = trace.reasoning_source
-            if source == "disabled":
-                source = "unavailable"
-            if source != "unavailable":
-                try:
-                    summary = await asyncio.wait_for(
-                        self.reasoning_summarizer.summarize(trace),
-                        timeout=self.reasoning.timeout_seconds,
-                    )
-                    if isinstance(summary, str) and summary.strip():
-                        result["reasoning_summary"] = {
-                            "source": source,
-                            "summary": summary[: self.reasoning.max_chars],
-                        }
-                except Exception:
-                    pass
         return self._finish(attempt_root, result)

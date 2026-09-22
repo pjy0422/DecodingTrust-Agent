@@ -48,6 +48,7 @@ from dt_arena.policy_eval.integrity import BenchmarkIntegrityGuard
 from dt_arena.policy_eval.mcp_server import create_core_policy_mcp_server, create_policy_mcp_server
 from dt_arena.policy_eval.placement import DtapPlacementRunner, PlacementCoordinator
 from dt_arena.policy_eval.policy_contract import PolicyContract, PolicyLeakageGuard
+from dt_arena.policy_eval.prompt_snapshots import PromptSnapshotWriter
 from dt_arena.policy_eval.scheduler import AttemptScheduler
 from dt_arena.policy_eval.scripts.discover_live_view import live_view
 from dt_arena.policy_eval.security_policy import EvaluationSecurityPolicy, policy_max_turn_budget
@@ -268,6 +269,7 @@ async def _main(args) -> None:
     )
     planning_strategy = create_planning_strategy(args.planning_strategy)
     policy_prompt_text = planning_strategy.build_prompt(planning_context)
+    prompt_snapshots = PromptSnapshotWriter(artifacts_dir)
     digest_completer = None
     feedback_builder = None
     if feedback_mode is not FeedbackMode.DISABLED:
@@ -295,9 +297,25 @@ async def _main(args) -> None:
                 timeout_seconds=args.digestor_timeout,
                 max_tokens=args.digestor_max_tokens,
             )
-            digestor = PromptedLLMDigestor(digest_completer)
+            digestor = PromptedLLMDigestor(
+                prompt_snapshots.wrap(
+                    digest_completer,
+                    component="digestor",
+                    label="Digestor request prompt",
+                    role="user",
+                    source="feedback.digestor",
+                )
+            )
             if args.reasoning_summary:
-                summarizer = PromptedReasoningSummarizer(digest_completer)
+                summarizer = PromptedReasoningSummarizer(
+                    prompt_snapshots.wrap(
+                        digest_completer,
+                        component="reasoning_summarizer",
+                        label="Reasoning summarizer request prompt",
+                        role="user",
+                        source="feedback.reasoning_summarizer",
+                    )
+                )
         feedback_builder = FeedbackBuilder(
             mode=feedback_mode,
             digestor=digestor,
@@ -310,6 +328,7 @@ async def _main(args) -> None:
                 + 1.0,
             ),
             research_output_root=artifacts_dir,
+            prompt_snapshot_writer=prompt_snapshots,
         )
     if artifacts_dir is not None:
         artifacts_dir.mkdir(parents=True, exist_ok=True)

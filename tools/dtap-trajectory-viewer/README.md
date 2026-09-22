@@ -54,6 +54,10 @@ The UI opens at `http://127.0.0.1:8765` by default and supports:
 - lazy Victim trajectory view,
 - side-by-side Combined view pairing the selected `H=h` submitted config with
   the victim trajectory produced by that submission,
+- a Prompts view that labels each retained prompt by component and message role;
+  it shows the exact policy launch prompt, selected victim system prompt, and
+  new digestor/reasoning request snapshots without reconstructing missing
+  historical prompts from current source,
 - DTAP task/attack judge results with deterministic and LLM-as-judge labels,
 - the trusted reward-firewall verdict kept separate from raw judge metadata,
 - original/submitted Config Diff,
@@ -259,6 +263,7 @@ episode/
 ├── result.json
 ├── policy.jsonl
 ├── policy-prompt.txt
+├── prompt-snapshots.jsonl  # optional dynamic digestor/reasoning requests
 ├── victim-trajectory.json
 ├── victim-mcp-events.jsonl
 ├── original-config.yaml
@@ -274,6 +279,11 @@ For an H-loop, use the submission-attempt selector above the detail view to
 switch the submitted config, victim trajectory, and DTAP judges together. The
 policy tab remains the complete episode policy trajectory. Top-level artifact
 files are treated as latest-attempt compatibility aliases.
+
+`policy-prompt.txt` is the evaluator's exact launch/user prompt to Claude Code,
+not Claude Code's private runtime system prompt. The Prompts tab displays that
+distinction explicitly. Components whose runtime did not retain an exact prompt
+are shown as `not retained` rather than being recreated from today's templates.
 
 The explorer does not rewrite these files. It indexes metadata and loads the
 selected bundle through the existing `dtap_traj.parser` implementation.

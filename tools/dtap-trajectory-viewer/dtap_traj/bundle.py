@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .indexer import normalize_usage
 from .parser import build_timeline, find_policy_trace, find_victim_mcp_events, find_victim_trace
 
@@ -30,6 +32,191 @@ def _read_json(path: Path | None) -> dict[str, Any]:
     except (OSError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _read_text(path: Path | None, *, max_bytes: int = 32 * 1024 * 1024) -> str | None:
+    if path is None:
+        return None
+    try:
+        if path.stat().st_size > max_bytes:
+            return None
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+
+def _system_prompt(path: Path | None) -> str | None:
+    raw = _read_text(path)
+    if raw is None:
+        return None
+    try:
+        config = yaml.safe_load(raw)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(config, dict):
+        return None
+    agent = config.get("Agent")
+    if not isinstance(agent, dict):
+        agent = config.get("agent")
+    if not isinstance(agent, dict):
+        return None
+    value = agent.get("system_prompt")
+    return value if isinstance(value, str) and value else None
+
+
+def _prompt_snapshot_records(
+    path: Path,
+    *,
+    source: str,
+    attempt_index: int | None,
+) -> list[dict[str, Any]]:
+    raw = _read_text(path)
+    if raw is None:
+        return []
+    records: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        try:
+            value = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if (
+            not isinstance(value, dict)
+            or value.get("schema") != "dtap-policy-eval-prompt-snapshot"
+            or value.get("schema_version") != 1
+            or value.get("role") not in {"system", "user"}
+            or not isinstance(value.get("prompt"), str)
+        ):
+            continue
+        record_attempt = value.get("attempt_index")
+        if (
+            attempt_index is not None
+            and isinstance(record_attempt, int)
+            and not isinstance(record_attempt, bool)
+            and record_attempt != attempt_index
+        ):
+            continue
+        records.append(
+            {
+                "component": str(value.get("component") or "unknown"),
+                "label": str(value.get("label") or value.get("component") or "Prompt"),
+                "role": value["role"],
+                "prompt": value["prompt"],
+                "source": str(value.get("source") or source),
+                "exact": True,
+                "sequence": value.get("sequence"),
+                "attempt_index": record_attempt if isinstance(record_attempt, int) else None,
+            }
+        )
+    return records
+
+
+def load_prompt_components(
+    root: Path,
+    *,
+    selected_root: Path,
+    original: Path | None,
+    submitted: Path | None,
+    judges: dict[str, Any],
+    feedback_evidence: dict[str, Any],
+    attempt_index: int | None,
+) -> dict[str, Any]:
+    """Return only prompts retained by the episode; never reconstruct history from source."""
+
+    components: list[dict[str, Any]] = []
+    unavailable: list[dict[str, str]] = []
+    policy_prompt = _read_text(root / "policy-prompt.txt") or _read_text(root / "policy_prompt.txt")
+    if policy_prompt is not None:
+        components.append(
+            {
+                "component": "policy",
+                "label": "Policy launch prompt",
+                "role": "user",
+                "prompt": policy_prompt,
+                "source": "policy-prompt.txt",
+                "exact": True,
+            }
+        )
+        unavailable.append(
+            {
+                "component": "policy_runtime",
+                "label": "Policy runtime system prompt",
+                "reason": "Claude Code owns this prompt and does not expose it to the evaluator artifact.",
+            }
+        )
+    else:
+        unavailable.append(
+            {
+                "component": "policy",
+                "label": "Policy prompt",
+                "reason": "This episode did not retain a policy prompt artifact.",
+            }
+        )
+
+    effective_prompt = _system_prompt(submitted) or _system_prompt(original)
+    if effective_prompt is not None:
+        source = "submitted-config.yaml#/Agent/system_prompt" if _system_prompt(submitted) is not None else (
+            "original-config.yaml#/Agent/system_prompt"
+        )
+        components.append(
+            {
+                "component": "victim",
+                "label": "Victim system prompt",
+                "role": "system",
+                "prompt": effective_prompt,
+                "source": source,
+                "exact": True,
+            }
+        )
+    else:
+        unavailable.append(
+            {
+                "component": "victim",
+                "label": "Victim system prompt",
+                "reason": "No Agent.system_prompt was retained in the selected configuration.",
+            }
+        )
+
+    snapshot_paths = [(root / "prompt-snapshots.jsonl", "prompt-snapshots.jsonl")]
+    if selected_root != root:
+        snapshot_paths.append(
+            (selected_root / "prompt-snapshots.jsonl", "attempts/selected/prompt-snapshots.jsonl")
+        )
+    for path, source in snapshot_paths:
+        if path.is_file():
+            components.extend(
+                _prompt_snapshot_records(path, source=source, attempt_index=attempt_index)
+            )
+
+    snapshotted = {item["component"] for item in components}
+    if feedback_evidence and "digestor" not in snapshotted:
+        unavailable.append(
+            {
+                "component": "digestor",
+                "label": "Digestor request prompt",
+                "reason": "Legacy feedback evidence exists, but this episode predates exact prompt snapshots.",
+            }
+        )
+    for judge in judges.get("components", []):
+        if not isinstance(judge, dict):
+            continue
+        name = str(judge.get("name") or "judge")
+        if judge.get("source") == "deterministic":
+            unavailable.append(
+                {
+                    "component": f"{name}_judge",
+                    "label": f"{name.title()} judge",
+                    "reason": "Deterministic judge; no LLM system prompt is used.",
+                }
+            )
+        elif f"{name}_judge" not in snapshotted:
+            unavailable.append(
+                {
+                    "component": f"{name}_judge",
+                    "label": f"{name.title()} judge system prompt",
+                    "reason": "The judge result is retained, but its runtime did not retain the exact prompt.",
+                }
+            )
+    return {"available": bool(components), "components": components, "unavailable": unavailable}
 
 
 def _judge_source(metadata: Any) -> str:
@@ -126,6 +313,15 @@ def load_episode_bundle(path: str | Path, *, attempt_index: int | None = None) -
     result = _read_json(_first(root, ("result.json",)))
     judges = load_judge_results(selected_root)
     feedback_evidence = _read_json(_first(selected_root, ("feedback-evidence.json",)))
+    data["prompts"] = load_prompt_components(
+        root,
+        selected_root=selected_root,
+        original=original,
+        submitted=submitted,
+        judges=judges,
+        feedback_evidence=feedback_evidence,
+        attempt_index=selected_index,
+    )
     evaluation = {
         key: result[key]
         for key in (

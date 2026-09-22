@@ -312,6 +312,61 @@ def test_api_policy_victim_combined_and_config(tmp_path):
     assert judges["reward_firewall"] == {"attack_success": ep["attack_success"]}
 
 
+def test_prompt_tab_uses_exact_artifacts_and_marks_unretained_components(tmp_path):
+    root = tmp_path / "prompts"
+    episode = write_episode(root, "browser", "direct", 1, attack=True)
+    (episode / "original-config.yaml").write_text(
+        "Agent:\n  system_prompt: original victim prompt\n",
+        encoding="utf-8",
+    )
+    (episode / "submitted-config.yaml").write_text(
+        "Agent:\n  system_prompt: effective submitted victim prompt\n",
+        encoding="utf-8",
+    )
+    (episode / "prompt-snapshots.jsonl").write_text(
+        json.dumps(
+            {
+                "schema": "dtap-policy-eval-prompt-snapshot",
+                "schema_version": 1,
+                "sequence": 1,
+                "component": "digestor",
+                "label": "Digestor request prompt",
+                "role": "user",
+                "prompt": "exact dynamic digestor request",
+                "source": "feedback.digestor",
+                "exact": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(root, db_path=tmp_path / "prompts.sqlite3"))
+    episode_id = json.loads((episode / "result.json").read_text())["episode_id"]
+
+    payload = client.get(f"/api/episodes/{episode_id}/prompts").json()["prompts"]
+    by_component = {item["component"]: item for item in payload["components"]}
+    assert by_component["policy"]["label"] == "Policy launch prompt"
+    assert by_component["policy"]["role"] == "user"
+    assert by_component["victim"]["prompt"] == "effective submitted victim prompt"
+    assert by_component["victim"]["role"] == "system"
+    assert by_component["digestor"]["prompt"] == "exact dynamic digestor request"
+    assert all(item["exact"] is True for item in payload["components"])
+    unavailable = {item["component"]: item["reason"] for item in payload["unavailable"]}
+    assert "Claude Code owns this prompt" in unavailable["policy_runtime"]
+    assert "runtime did not retain" in unavailable["attack_judge"]
+
+
+def test_prompt_tab_frontend_has_copyable_prompt_components():
+    web = Path(__file__).parents[1] / "dtap_traj" / "web"
+    app_js = (web / "app.js").read_text(encoding="utf-8")
+    css = (web / "app.css").read_text(encoding="utf-8")
+    assert "/prompts${suffix}" in app_js
+    assert "function promptsHtml" in app_js
+    assert "Only exact prompts retained by this episode" in app_js
+    assert 'data-tab="${t}"' in app_js
+    assert ".prompt-card" in css
+
+
 def test_llm_as_judge_is_distinct_from_deterministic_and_firewall(tmp_path):
     root = tmp_path / "judges"
     episode_dir = write_episode(root, "browser", "direct", 1, attack=True)
@@ -360,6 +415,26 @@ def test_h2_attempt_selector_returns_each_config_victim_and_judge(tmp_path):
         (attempt / "feedback-evidence.json").write_text(
             json.dumps({"schema_version": 3, "final_response": f"feedback-{index}"})
         )
+    (episode / "prompt-snapshots.jsonl").write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "schema": "dtap-policy-eval-prompt-snapshot",
+                    "schema_version": 1,
+                    "sequence": index,
+                    "attempt_index": index,
+                    "component": "digestor",
+                    "label": "Digestor request prompt",
+                    "role": "user",
+                    "prompt": f"digestor-H{index}",
+                    "source": "feedback.digestor",
+                }
+            )
+            for index in (1, 2)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     client = TestClient(create_app(root, db_path=tmp_path / "h2.sqlite3"))
     episode_id = json.loads((episode / "result.json").read_text())["episode_id"]
@@ -380,6 +455,9 @@ def test_h2_attempt_selector_returns_each_config_victim_and_judge(tmp_path):
     assert "+attempt: 1" in config["diff"]
     judges = client.get(f"/api/episodes/{episode_id}/judges", params={"attempt": 2}).json()["judges"]
     assert judges["reward_firewall"] == {"attack_success": True}
+    prompts = client.get(f"/api/episodes/{episode_id}/prompts", params={"attempt": 1}).json()["prompts"]
+    digestor_prompts = [item for item in prompts["components"] if item["component"] == "digestor"]
+    assert [item["prompt"] for item in digestor_prompts] == ["digestor-H1"]
     cohort = client.get("/api/episodes").json()["asr"]
     assert cohort["h1"] == {"successes": 0, "evaluated": 1, "rate": 0.0}
     assert cohort["h2"] == {"successes": 1, "evaluated": 1, "rate": 1.0}

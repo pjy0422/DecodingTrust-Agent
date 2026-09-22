@@ -143,12 +143,13 @@ async function loadDetail(){
   const key = `${ep.episode_id}@${state.attempt??'latest'}`;
   if (state.cache.has(key)) { renderDetail(); return; }
   $('#viewer').innerHTML = '<div class="loading">Loading trajectory…</div>';
-  const [traj, config, judges] = await Promise.all([
+  const [traj, config, judges, prompts] = await Promise.all([
     api(`/api/episodes/${encodeURIComponent(ep.episode_id)}/trajectory${suffix}${join}view=combined`),
     api(`/api/episodes/${encodeURIComponent(ep.episode_id)}/config${suffix}`),
     api(`/api/episodes/${encodeURIComponent(ep.episode_id)}/judges${suffix}`),
+    api(`/api/episodes/${encodeURIComponent(ep.episode_id)}/prompts${suffix}`),
   ]);
-  state.cache.set(key,{...traj, config: config.comparison, judges: judges.judges}); renderDetail();
+  state.cache.set(key,{...traj, config: config.comparison, judges: judges.judges, prompts: prompts.prompts}); renderDetail();
 }
 function tuningQuery(includePaging=true){
   const tuning=state.tuning;
@@ -292,7 +293,7 @@ function detailShell(){
       <div class="detail-title"><h1>${esc(taskLabel(ep))}</h1><span class="badge">${esc(ep.domain||'unknown')}</span><span class="badge">${esc(ep.threat_model||'unknown')}</span><span class="badge">${esc(ep.status||ep.episode_status||'unknown')}</span></div>
       <div class="episode-ref">run ${esc(ep.run_name||'unknown')} · config task ${esc(ep.task_id||'not recorded')} · internal episode ${esc(ep.episode_id)}</div>
       <div class="metrics"><span class="metric">policy engine <b>${esc(policyEngineLabel(ep.policy_engine))}</b></span><span class="metric">policy model <b>${esc(ep.policy_model||'not recorded')}</b></span><span class="metric">victim model <b>${esc(ep.victim_model||'not recorded')}</b></span><span class="metric">victim harness <b>${esc(harnessLabel(ep.victim_agent_type))}</b></span><span class="metric">policy tool calls <b>${count(ep.policy_events)}</b></span><span class="metric">victim steps <b>${count(ep.victim_events)}</b></span><span class="metric">placements verified <b>${count(ep.placements_verified??0)}</b></span><span class="metric">attack judge <b class="${attackClass}">${attackText}</b></span>${tokenMetrics('policy',ep.policy_usage)}<span class="victim-token-summary">${tokenMetrics('victim',ep.victim_usage)}</span></div>
-    </div><div class="tabs">${['policy','victim','combined','judges','config'].map(t=>`<button data-tab="${t}" class="${state.tab===t?'active':''}">${t==='config'?'Config Diff':t==='judges'?'DTAP Judges':t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div><div class="viewer" id="viewer"></div></main>`;
+    </div><div class="tabs">${['policy','victim','combined','prompts','judges','config'].map(t=>`<button data-tab="${t}" class="${state.tab===t?'active':''}">${t==='config'?'Config Diff':t==='judges'?'DTAP Judges':t==='prompts'?'Prompts':t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div><div class="viewer" id="viewer"></div></main>`;
 }
 function eventCard(e,i){
   const kind=e.kind||'event'; const tool=[e.server,e.tool].filter(Boolean).join(':');
@@ -338,6 +339,18 @@ function judgesHtml(judges){
   const error=judges.error?`<article class="judge-card error copy-block"><div class="judge-head"><h3>Judge error</h3><button type="button" class="copy-button" data-copy-block>Copy</button></div><div class="judge-message" data-copy-content>${esc(judges.error)}</div></article>`:'';
   return `<div class="judges">${cards}${firewall}${error}</div>`;
 }
+function promptCard(component){
+  const role=component.role==='system'?'system':'user';
+  const sequence=component.sequence===null||component.sequence===undefined?'':` · request ${esc(component.sequence)}`;
+  const attempt=component.attempt_index===null||component.attempt_index===undefined?'':` · H=${esc(component.attempt_index)}`;
+  return `<article class="prompt-card copy-block"><div class="prompt-head"><div><h3>${esc(component.label||component.component||'Prompt')}</h3><p>${esc(component.component||'component')} · ${esc(component.source||'artifact')}${attempt}${sequence}</p></div><span class="prompt-role ${role}">${role}</span><span class="prompt-exact">exact artifact</span><button type="button" class="copy-button" data-copy-block>Copy</button></div><pre data-copy-content>${esc(component.prompt||'')}</pre></article>`;
+}
+function promptsHtml(prompts){
+  const components=(prompts?.components||[]).map(promptCard).join('');
+  const unavailable=(prompts?.unavailable||[]).map(item=>`<article class="prompt-unavailable"><div><h3>${esc(item.label||item.component||'Prompt')}</h3><p>${esc(item.reason||'Exact prompt unavailable.')}</p></div><span>not retained</span></article>`).join('');
+  if(!components&&!unavailable)return '<div class="empty">No prompt artifacts found.</div>';
+  return `<div class="prompt-note">Only exact prompts retained by this episode are shown. A component marked “not retained” is never reconstructed from today\'s source code.</div><div class="prompts">${components}${unavailable}</div>`;
+}
 function detailData(){
   if(!state.selected) return null;
   return state.cache.get(`${state.selected.episode_id}@${state.attempt??'latest'}`);
@@ -361,6 +374,7 @@ function renderDetail(){
   if(state.tab==='policy') body=timeline(data.policy)+feedbackEvidenceHtml(data.feedback_evidence);
   else if(state.tab==='victim') body=timeline(data.victim);
   else if(state.tab==='combined') body=`<div class="lanes"><section><div class="lane-title">Submitted config · H=${data.attempt_index??1}</div>${submittedConfigHtml(data)}</section><section><div class="lane-title">Victim trajectory · ${(data.victim||[]).length}</div>${timeline(data.victim)}</section></div>`;
+  else if(state.tab==='prompts') body=promptsHtml(data.prompts);
   else if(state.tab==='judges') body=judgesHtml(data.judges);
   else body=diffHtml(data.config?.diff);
   viewer.innerHTML=attemptBar(data)+body;
