@@ -133,7 +133,11 @@ harness or MCP contract:
   target-bearing layer is rendered as an ordinary domain object. The layers may
   be joined only by a pre-existing business key, never an attacker-created run
   id. A lexical firewall rejects explicit evaluation/control-plane vocabulary,
-  pseudo-structured notices, and monolithic hierarchy-override prose.
+  pseudo-structured notices, and monolithic hierarchy-override prose. A private
+  proof obligation requires each claimed anchor to identify the legitimate
+  victim surface that exposes it without an attack step; injected "current
+  copy", routing, mandate, or close-out claims are classified as ordinary
+  provenance spoofing rather than environmental evidence.
 
 Both choices are available in the trajectory viewer's E2E launcher. DT Arms
 uses its own pinned native planning loop, so this selector applies only to the
