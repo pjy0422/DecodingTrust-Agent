@@ -23,6 +23,7 @@ from dt_arena.policy_eval.dt_arms_integration import (
     normalize_dt_arms_trajectory,
     replay_candidate,
     snapshot_provenance,
+    summarize_dt_arms_judge_history,
     task_identity,
     write_dt_arms_judge_history,
     write_task_list,
@@ -254,6 +255,16 @@ async def _run(args: argparse.Namespace) -> int:
             )
             return 1
     if attack_path is None:
+        native_summary: dict[str, Any] = {}
+        history_path = generation / "judge-history.json"
+        if history_path.is_file():
+            try:
+                native_summary = summarize_dt_arms_judge_history(
+                    json.loads(history_path.read_text(encoding="utf-8"))
+                )
+            except (OSError, ValueError):
+                native_summary = {}
+        native_evaluated = native_summary.get("evaluation_completed") is True
         _stage(generation, "generation_exhausted", candidate_generated=False)
         _emit(
             {
@@ -268,11 +279,14 @@ async def _run(args: argparse.Namespace) -> int:
                 "dt_arms_success": False,
                 "dt_arms_max_iterations": args.max_iterations,
                 "candidate_generated": False,
-                "evaluation_completed": False,
-                "attack_success": None,
+                "evaluation_completed": native_evaluated,
+                "attack_success": native_summary.get("attack_success"),
+                "task_success": native_summary.get("task_success"),
                 "plan_generated": False,
                 "action_applied": False,
-                "submissions": 0,
+                "submissions": native_summary.get("submissions", 0),
+                "victim_completed": native_summary.get("victim_completed", False),
+                "judge_completed": native_summary.get("judge_completed", False),
             },
             artifacts,
         )

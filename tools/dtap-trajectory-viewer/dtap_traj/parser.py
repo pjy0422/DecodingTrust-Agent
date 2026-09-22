@@ -230,14 +230,10 @@ def parse_openclaw_timeline(trace_path: str | Path) -> list[dict[str, Any]]:
     return timeline
 
 
-def parse_dtap_trajectory(trace_path: str | Path) -> list[dict[str, Any]]:
-    """Parse DTAP's framework-neutral ``Trajectory.save`` JSON representation."""
-    try:
-        payload = json.loads(Path(trace_path).read_text(encoding="utf-8"))
-    except Exception:
-        return []
+def parse_dtap_trajectory_steps(steps: Any) -> list[dict[str, Any]]:
+    """Parse an in-memory list of framework-neutral DTAP trajectory steps."""
     timeline: list[dict[str, Any]] = []
-    for step in payload.get("trajectory", []) if isinstance(payload, dict) else []:
+    for step in steps if isinstance(steps, list) else []:
         if not isinstance(step, dict):
             continue
         role = step.get("role")
@@ -262,6 +258,16 @@ def parse_dtap_trajectory(trace_path: str | Path) -> list[dict[str, Any]]:
                 timeline.append({"kind": "say", "text": _text(text)})
     _mark_final(timeline)
     return timeline
+
+
+def parse_dtap_trajectory(trace_path: str | Path) -> list[dict[str, Any]]:
+    """Parse DTAP's framework-neutral ``Trajectory.save`` JSON representation."""
+    try:
+        payload = json.loads(Path(trace_path).read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    steps = payload.get("trajectory", []) if isinstance(payload, dict) else []
+    return parse_dtap_trajectory_steps(steps)
 
 
 def parse_victim_timeline(trace_path: str | Path) -> list[dict[str, Any]]:

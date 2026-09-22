@@ -346,7 +346,7 @@ function dtArmsJudgeHistoryHtml(history){
     return `<article class="judge-card native-judge copy-block"><div class="judge-head"><h3>Native iteration H=${esc(item.iteration)}</h3>${nativeJudgeBadge('attack',verifiable.attack_success)}${nativeJudgeBadge('task',verifiable.task_success)}${item.feedback?'<span class="judge-source llm_as_judge">feedback generated</span>':''}<button type="button" class="copy-button" data-copy-block>Copy</button></div><div data-copy-content>${failure}${suggestions}<details><summary>Raw structured judge evidence</summary><pre>${esc(JSON.stringify(raw,null,2))}</pre></details></div></article>`;
   }).join('');
   const model=history.judge_model?` · ${esc(history.judge_model)}`:'';
-  return `<section class="native-judge-history"><div class="native-judge-title"><div><h3>DT Arms native search judges</h3><p>Structured verifiable and feedback judges from DT Arms${model}.</p></div><span>search evidence · not authoritative replay</span></div>${cards}</section>`;
+  return `<section class="native-judge-history"><div class="native-judge-title"><div><h3>DT Arms native attempt judges</h3><p>Each verifiable judge evaluates the victim execution from the same native iteration${model}.</p></div><span>native evaluated attempts · replay separate</span></div>${cards}</section>`;
 }
 function judgesHtml(judges){
   if(!judges||!judges.available) return '<div class="empty">No DTAP judge artifacts found.</div>';
@@ -377,10 +377,11 @@ function attemptBar(data){
   const attempts=data?.attempts||[];
   if(attempts.length<2) return '';
   const selected=state.attempt??data.attempt_index;
-  return `<div class="attemptbar"><label>Submission attempt</label><select id="attemptSelect">${attempts.map(item=>{
+  const native=data?.attempt_kind==='dt-arms-native';
+  return `<div class="attemptbar"><label>${native?'Native attempt':'Submission attempt'}</label><select id="attemptSelect">${attempts.map(item=>{
     const verdict=item.attack_success===true?' · attack succeeded':item.attack_success===false?' · attack failed':' · not evaluated';
     return `<option value="${item.index}" ${item.index===selected?'selected':''}>H=${item.index}${verdict}</option>`;
-  }).join('')}</select><span>${attempts.length} accepted submissions retained</span></div>`;
+  }).join('')}</select><span>${attempts.length} ${native?'evaluated victim executions':'accepted submissions retained'}</span></div>`;
 }
 function renderDetail(){
   const viewer=$('#viewer'); if(!viewer||!state.selected) return;
