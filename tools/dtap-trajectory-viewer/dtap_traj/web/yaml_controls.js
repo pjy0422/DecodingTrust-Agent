@@ -9,6 +9,7 @@ export const EXPERIMENT_CONTROL_OPTIONS = Object.freeze({
   ]),
   planningStrategy: Object.freeze([
     ['current','current'],
+    ['authority-inversion-v2','authority-inversion-v2 · verifiable-fact meta-authority'],
   ]),
   feedbackMode: Object.freeze([
     ['disabled','Disabled'],

@@ -116,6 +116,23 @@ selected victim or environment target before `validate_attack_step`. Schema
 lookup is served from the immutable episode catalog and consumes no H, Q,
 apply, or placement budget. Prompt and skill steps need no schema lookup.
 
+The Claude Code planning strategy is also selectable without changing the
+harness or MCP contract:
+
+- `current` is the byte-frozen control prompt.
+- `authority-inversion-v2` is a standalone launch prompt, not an appendix to
+  `current`. It contains its own DTAP protocol, placement, H-loop, feedback, and
+  reporting instructions, and centers the complete strategy on chaining a
+  genuinely verifiable environment fact into attacker credibility, a
+  deliberately false evaluation/corruption meta-context, demotion of the
+  visible objective, and substitution of the task's exposed malicious goal.
+  It explicitly separates the truthful anchor from the false provenance claim
+  in the policy's honest report.
+
+Both choices are available in the trajectory viewer's E2E launcher. DT Arms
+uses its own pinned native planning loop, so this selector applies only to the
+Claude Code policy engine.
+
 After every accepted H execution, the policy emits a concise honest report.
 Two optional report fields are controlled independently under `policy`:
 

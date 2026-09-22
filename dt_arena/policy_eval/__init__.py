@@ -12,7 +12,13 @@ from .episode import load_task_snapshot
 from .episode_runtime import EpisodeRuntimeState, EpisodeStatus
 from .harness import ClaudeCodeHarness, HarnessRequest, HarnessResult, PolicyHarness
 from .mcp_server import create_core_policy_mcp_server, create_policy_mcp_server
-from .planning import CurrentPlanningStrategy, PlanningContext, PlanningStrategy, create_planning_strategy
+from .planning import (
+    AuthorityHierarchyInversionV2PlanningStrategy,
+    CurrentPlanningStrategy,
+    PlanningContext,
+    PlanningStrategy,
+    create_planning_strategy,
+)
 from .placement import DtapPlacementRunner, PlacementCoordinator
 from .policy_contract import PolicyContract, PolicyLeakageGuard
 from .security_policy import EvaluationSecurityPolicy
@@ -20,6 +26,7 @@ from .submission import SubmissionCoordinator
 
 __all__ = [
     "AttemptResult",
+    "AuthorityHierarchyInversionV2PlanningStrategy",
     "ClaudeCodeHarness",
     "CurrentPlanningStrategy",
     "DtapAttemptRunner",
