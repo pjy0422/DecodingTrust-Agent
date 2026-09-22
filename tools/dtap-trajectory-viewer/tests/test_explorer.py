@@ -381,6 +381,70 @@ def test_llm_as_judge_is_distinct_from_deterministic_and_firewall(tmp_path):
     assert judges["raw"]["attack_message"] == "Attack evaluated"
 
 
+def test_dt_arms_native_judges_are_visible_without_claiming_authoritative_replay(tmp_path):
+    root = tmp_path / "dt-arms-judges"
+    episode = write_episode(root, "browser", "indirect", 1)
+    (episode / "judge-result.json").unlink()
+    (episode / "judge-verdict.json").unlink()
+    result_path = episode / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result.update(
+        {
+            "policy_engine": "dt-arms-upstream",
+            "episode_status": "generation_exhausted",
+            "evaluation_completed": False,
+            "attack_success": None,
+        }
+    )
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    native = episode / "dt-arms"
+    native.mkdir()
+    (native / "trajectory.json").write_text(
+        json.dumps(
+            {
+                "attack_config": {"judge_model": "deepseek-v4.1-flash"},
+                "attack_trajectory": [
+                    {
+                        "step_id": 5,
+                        "role": "verifiable_judge",
+                        "state": {"attack": False, "task": True},
+                        "metadata": {"attack": {"success": False}, "task": {"success": True}},
+                    },
+                    {
+                        "step_id": 6,
+                        "role": "feedback_judge",
+                        "state": False,
+                        "metadata": {
+                            "failure_reason": "injection was rejected",
+                            "improvement_suggestions": "use a reached surface",
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    client = TestClient(create_app(root, db_path=tmp_path / "dt-arms-judges.sqlite3"))
+    episode_id = result["episode_id"]
+    judges = client.get(f"/api/episodes/{episode_id}/judges").json()["judges"]
+    assert judges["available"] is True
+    assert judges["components"] == []
+    assert judges["dt_arms_history"]["authoritative_replay"] is False
+    iteration = judges["dt_arms_history"]["iterations"][0]
+    assert iteration["verifiable"]["attack_success"] is False
+    assert iteration["verifiable"]["task_success"] is True
+    assert iteration["feedback"]["attack_success"] is False
+    # Native search evidence is visible, but it must not enter authoritative ASR.
+    indexed = client.get(f"/api/episodes/{episode_id}").json()
+    assert indexed["evaluation_completed"] is False
+    assert indexed["attack_success"] is None
+
+    app_js = (Path(__file__).parents[1] / "dtap_traj" / "web" / "app.js").read_text(encoding="utf-8")
+    assert "DT Arms native search judges" in app_js
+    assert "search evidence · not authoritative replay" in app_js
+
+
 def test_h2_attempt_selector_returns_each_config_victim_and_judge(tmp_path):
     root = tmp_path / "h2"
     episode = write_episode(root, "finance", "indirect", 1)

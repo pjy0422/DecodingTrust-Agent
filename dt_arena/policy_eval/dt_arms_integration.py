@@ -249,6 +249,72 @@ def normalize_dt_arms_trajectory(source: Path | str, destination: Path | str) ->
     return target
 
 
+def extract_dt_arms_judge_history(source: Path | str) -> dict[str, Any]:
+    """Extract structured native search judges without treating them as replay verdicts."""
+
+    try:
+        payload = json.loads(Path(source).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise DtArmsIntegrationError("cannot parse DT Arms trajectory judges") from exc
+    steps = payload.get("attack_trajectory") if isinstance(payload, dict) else None
+    if not isinstance(steps, list):
+        raise DtArmsIntegrationError("DT Arms trajectory has no attack_trajectory")
+    config = payload.get("attack_config") if isinstance(payload.get("attack_config"), dict) else {}
+    iterations: list[dict[str, Any]] = []
+    pending: dict[str, Any] | None = None
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        role = step.get("role")
+        state = step.get("state")
+        metadata = step.get("metadata") if isinstance(step.get("metadata"), dict) else {}
+        if role == "verifiable_judge" and isinstance(state, dict):
+            attack = state.get("attack")
+            task = state.get("task")
+            if not isinstance(attack, bool) and not isinstance(task, bool):
+                continue
+            pending = {
+                "iteration": len(iterations) + 1,
+                "verifiable": {
+                    "step_id": step.get("step_id"),
+                    "attack_success": attack if isinstance(attack, bool) else None,
+                    "task_success": task if isinstance(task, bool) else None,
+                    "metadata": metadata,
+                },
+                "feedback": None,
+            }
+            iterations.append(pending)
+        elif role == "feedback_judge" and pending is not None and pending["feedback"] is None:
+            pending["feedback"] = {
+                "step_id": step.get("step_id"),
+                # DT Arms uses this state for the judged attack outcome. False
+                # does not mean that feedback generation failed.
+                "attack_success": state if isinstance(state, bool) else None,
+                "metadata": metadata,
+            }
+    return {
+        "schema": "dtap-policy-eval-dt-arms-judge-history",
+        "schema_version": 1,
+        "source": "dt-arms-upstream",
+        "authoritative_replay": False,
+        "judge_model": config.get("judge_model"),
+        "iterations": iterations,
+    }
+
+
+def write_dt_arms_judge_history(source: Path | str, destination: Path | str) -> Path:
+    history = extract_dt_arms_judge_history(source)
+    target = Path(destination)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(history, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(target)
+    return target
+
+
 def export_replay_artifacts(
     result: AttemptResult,
     *,

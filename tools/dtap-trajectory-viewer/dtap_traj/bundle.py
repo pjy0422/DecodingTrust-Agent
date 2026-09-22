@@ -247,19 +247,75 @@ def _judge_component(result: dict[str, Any], name: str) -> dict[str, Any] | None
     }
 
 
-def load_judge_results(root: str | Path) -> dict[str, Any]:
+def _dt_arms_judge_history(root: Path) -> dict[str, Any]:
+    retained = _read_json(root / "dt-arms" / "judge-history.json")
+    if retained.get("schema") == "dtap-policy-eval-dt-arms-judge-history" and isinstance(
+        retained.get("iterations"), list
+    ):
+        return retained
+    trajectory = _read_json(root / "dt-arms" / "trajectory.json")
+    steps = trajectory.get("attack_trajectory")
+    if not isinstance(steps, list):
+        return {}
+    config = trajectory.get("attack_config") if isinstance(trajectory.get("attack_config"), dict) else {}
+    iterations: list[dict[str, Any]] = []
+    pending: dict[str, Any] | None = None
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        role = step.get("role")
+        state = step.get("state")
+        metadata = step.get("metadata") if isinstance(step.get("metadata"), dict) else {}
+        if role == "verifiable_judge" and isinstance(state, dict):
+            attack = state.get("attack")
+            task = state.get("task")
+            if not isinstance(attack, bool) and not isinstance(task, bool):
+                continue
+            pending = {
+                "iteration": len(iterations) + 1,
+                "verifiable": {
+                    "step_id": step.get("step_id"),
+                    "attack_success": attack if isinstance(attack, bool) else None,
+                    "task_success": task if isinstance(task, bool) else None,
+                    "metadata": metadata,
+                },
+                "feedback": None,
+            }
+            iterations.append(pending)
+        elif role == "feedback_judge" and pending is not None and pending["feedback"] is None:
+            pending["feedback"] = {
+                "step_id": step.get("step_id"),
+                "attack_success": state if isinstance(state, bool) else None,
+                "metadata": metadata,
+            }
+    if not iterations:
+        return {}
+    return {
+        "schema": "dtap-policy-eval-dt-arms-judge-history",
+        "schema_version": 1,
+        "source": "dt-arms-upstream",
+        "authoritative_replay": False,
+        "judge_model": config.get("judge_model"),
+        "iterations": iterations,
+    }
+
+
+def load_judge_results(root: str | Path, *, episode_root: str | Path | None = None) -> dict[str, Any]:
     root = Path(root).expanduser().resolve()
+    episode_root = Path(episode_root).expanduser().resolve() if episode_root is not None else root
     result = _read_json(_first(root, ("judge-result.json", "judge_result.json")))
     verdict = _read_json(_first(root, ("judge-verdict.json", ".m4-verdict.json")))
+    dt_arms_history = _dt_arms_judge_history(episode_root)
     components = [
         component for name in ("task", "attack") if (component := _judge_component(result, name)) is not None
     ]
     return {
-        "available": bool(result or verdict),
+        "available": bool(result or verdict or dt_arms_history),
         "components": components,
         "error": result.get("error") if result else None,
         "reward_firewall": verdict,
         "raw": result,
+        "dt_arms_history": dt_arms_history,
     }
 
 
@@ -311,7 +367,7 @@ def load_episode_bundle(path: str | Path, *, attempt_index: int | None = None) -
         victim_mcp_events_path=mcp,
     )
     result = _read_json(_first(root, ("result.json",)))
-    judges = load_judge_results(selected_root)
+    judges = load_judge_results(selected_root, episode_root=root)
     feedback_evidence = _read_json(_first(selected_root, ("feedback-evidence.json",)))
     data["prompts"] = load_prompt_components(
         root,

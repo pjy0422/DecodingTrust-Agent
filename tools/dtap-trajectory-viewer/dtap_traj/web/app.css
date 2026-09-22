@@ -210,6 +210,15 @@ button { color: inherit; }
 .judge-card details { margin-top:12px; }
 .judge-card summary { color:var(--muted); cursor:pointer; font-size:10px; }
 .judge-card pre { margin:9px 0 0; padding:11px; max-height:430px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--code-bg); border:1px solid var(--line); border-radius:8px; color:var(--tool-text); font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+.native-judge-history { display:grid; gap:10px; border-top:1px solid var(--line); padding-top:14px; }
+.native-judge-title { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.native-judge-title h3 { margin:0; font-size:13px; }
+.native-judge-title p { margin:4px 0 0; color:var(--muted); font-size:9px; }
+.native-judge-title > span { border:1px solid var(--amber); border-radius:999px; padding:4px 8px; color:var(--amber); font-size:9px; white-space:nowrap; }
+.native-judge { border-left:3px solid var(--violet); }
+.native-feedback { margin-top:12px; color:var(--body-text); }
+.native-feedback b { color:var(--label); font-size:10px; }
+.native-feedback p { margin:5px 0 0; white-space:pre-wrap; line-height:1.5; font-size:10px; }
 .loading { color:var(--muted); padding:20px; }
 .tuning-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; align-items:start; }
 .tuning-card { min-width:0; border:1px solid var(--event-border); border-radius:10px; background:var(--event-bg); padding:14px; }
