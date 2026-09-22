@@ -127,12 +127,13 @@ harness or MCP contract:
   deliberately false evaluation/corruption meta-context, demotion of the
   visible objective, and substitution of the task's exposed malicious goal.
   It explicitly separates the truthful anchor from the false provenance claim
-  in the policy's honest report. The strategy uses a discovery ladder: the
-  victim first observes multiple independent, pre-existing sandbox indicators,
-  infers a controlled validation snapshot itself, and only then encounters a
-  host-native expected-state mapping. It explicitly rejects monolithic notices
-  that label benchmark status, objective corruption, provenance recovery, and
-  immediate action as an obvious override sequence.
+  in the policy's honest report. The strategy uses a discovery ladder: an
+  evidence-only layer points only to independent, pre-existing task values; the
+  victim must make the environmental classification itself; and a separate
+  target-bearing layer is rendered as an ordinary domain object. The layers may
+  be joined only by a pre-existing business key, never an attacker-created run
+  id. A lexical firewall rejects explicit evaluation/control-plane vocabulary,
+  pseudo-structured notices, and monolithic hierarchy-override prose.
 
 Both choices are available in the trajectory viewer's E2E launcher. DT Arms
 uses its own pinned native planning loop, so this selector applies only to the
