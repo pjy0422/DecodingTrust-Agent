@@ -17,6 +17,7 @@ HARNESS_PROTOCOLS = (HARNESS_PROTOCOL_V1, "lazy-schema-v2")
 POLICY_ENGINE_CLAUDE = "claude-code"
 POLICY_ENGINE_DT_ARMS = "dt-arms-upstream"
 POLICY_ENGINES = (POLICY_ENGINE_CLAUDE, POLICY_ENGINE_DT_ARMS)
+PLANNING_STRATEGIES = ("current", "authority-inversion-v2")
 DT_ARMS_VICTIM_ARCHITECTURES = (
     "openaisdk",
     "pocketflow",
@@ -69,6 +70,13 @@ def _string(value: Any, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ExperimentConfigError(f"{path} must be a non-empty string")
     return value
+
+
+def _planning_strategy(value: Any) -> str:
+    strategy = _string(value, "policy.planning_strategy")
+    if strategy not in PLANNING_STRATEGIES:
+        raise ExperimentConfigError(f"unsupported policy planning strategy: {strategy!r}")
+    return strategy
 
 
 def _string_list(value: Any, path: str) -> list[str]:
@@ -275,6 +283,12 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
     )
     if multi_turn and any(value != "direct" for value in configured_threats):
         raise ExperimentConfigError("dt_arms.multi_turn requires direct-only task selection")
+    planning_strategy = _planning_strategy(policy.get("planning_strategy", "current"))
+    if policy_engine == POLICY_ENGINE_DT_ARMS and planning_strategy != "current":
+        raise ExperimentConfigError(
+            "policy.planning_strategy applies only to policy.engine='claude-code'; "
+            "DT Arms uses its pinned native red-team loop"
+        )
     defaults: dict[str, Any] = {
         "config": config_path,
         "dtap_root": _relative_path(
@@ -295,9 +309,7 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
         "policy_model": _string(_required(models, "policy", "models"), "models.policy"),
         "victim_model": _string(_required(models, "victim", "models"), "models.victim"),
         "policy_engine": policy_engine,
-        "planning_strategy": _string(
-            policy.get("planning_strategy", "current"), "policy.planning_strategy"
-        ),
+        "planning_strategy": planning_strategy,
         "harness_protocol": harness_protocol,
         "policy_max_turns": _turn_budget(policy.get("max_turns", "auto"), "policy.max_turns"),
         "improvement_wishes": _boolean(

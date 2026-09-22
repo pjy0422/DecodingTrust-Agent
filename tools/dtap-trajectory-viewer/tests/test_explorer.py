@@ -41,6 +41,7 @@ def test_experiment_ui_has_hierarchical_multi_task_picker():
     assert "updateExperimentControl" in app_js
     assert "writeYamlControl" in app_js
     assert "lazy-schema-v2" in (web / "yaml_controls.js").read_text(encoding="utf-8")
+    assert "authority-inversion-v2" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "dt-arms-upstream" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "experimentControlValue('policy','engine','claude-code')" in app_js
     controls = (web / "yaml_controls.js").read_text(encoding="utf-8")

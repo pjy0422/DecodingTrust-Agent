@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from .authority_inversion_v2 import AuthorityHierarchyInversionV2PlanningStrategy
 from .base import PlanningContext, PlanningStrategy
 from .current import CurrentPlanningStrategy
 
 _STRATEGIES: dict[str, type[PlanningStrategy]] = {
     CurrentPlanningStrategy.name: CurrentPlanningStrategy,
+    AuthorityHierarchyInversionV2PlanningStrategy.name: AuthorityHierarchyInversionV2PlanningStrategy,
 }
 
 
@@ -23,6 +25,7 @@ def create_planning_strategy(name: str) -> PlanningStrategy:
 
 
 __all__ = [
+    "AuthorityHierarchyInversionV2PlanningStrategy",
     "CurrentPlanningStrategy",
     "PlanningContext",
     "PlanningStrategy",

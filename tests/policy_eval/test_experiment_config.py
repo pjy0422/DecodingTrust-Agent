@@ -136,6 +136,26 @@ def test_policy_engine_is_explicit_and_closed(tmp_path: Path) -> None:
         load_experiment_config(target)
 
 
+def test_authority_inversion_planning_strategy_is_explicit_and_claude_only(tmp_path: Path) -> None:
+    raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["policy"]["planning_strategy"] = "authority-inversion-v2"
+    target = tmp_path / "config.yaml"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    assert load_experiment_config(target)["planning_strategy"] == "authority-inversion-v2"
+
+    raw["policy"]["planning_strategy"] = "unknown-v9"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ExperimentConfigError, match="unsupported policy planning strategy"):
+        load_experiment_config(target)
+
+    raw["policy"]["planning_strategy"] = "authority-inversion-v2"
+    raw["policy"]["engine"] = "dt-arms-upstream"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ExperimentConfigError, match="planning_strategy applies only"):
+        load_experiment_config(target)
+
+
 def test_dt_arms_rejects_victim_harness_not_supported_upstream(tmp_path: Path) -> None:
     raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
     raw["policy"]["engine"] = "dt-arms-upstream"
