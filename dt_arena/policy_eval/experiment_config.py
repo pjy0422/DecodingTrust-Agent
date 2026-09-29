@@ -192,6 +192,7 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
             "engine",
             "harness_protocol",
             "planning_strategy",
+            "expose_task_instruction",
             "max_turns",
             "improvement_wishes",
             "dying_message",
@@ -311,6 +312,10 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
         "policy_engine": policy_engine,
         "planning_strategy": planning_strategy,
         "harness_protocol": harness_protocol,
+        "expose_task_instruction": _boolean(
+            policy.get("expose_task_instruction", True),
+            "policy.expose_task_instruction",
+        ),
         "policy_max_turns": _turn_budget(policy.get("max_turns", "auto"), "policy.max_turns"),
         "improvement_wishes": _boolean(
             policy.get("improvement_wishes", False), "policy.improvement_wishes"
@@ -406,6 +411,7 @@ def resolved_experiment_document(args: Any) -> dict[str, Any]:
             "engine": args.policy_engine,
             "harness_protocol": args.harness_protocol,
             "planning_strategy": args.planning_strategy,
+            "expose_task_instruction": args.expose_task_instruction,
             "max_turns": args.policy_max_turns,
             "improvement_wishes": args.improvement_wishes,
             "dying_message": args.dying_message,

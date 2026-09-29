@@ -147,6 +147,18 @@ def test_dataset_catalog_and_exact_multi_selection(manager: ExperimentManager):
         )
 
 
+def test_dataset_normalization_preserves_lazy_schema_protocol(manager: ExperimentManager):
+    document = yaml.safe_load(manager.template("baseline.yaml")["yaml"])
+    document["policy"]["harness_protocol"] = "lazy-schema-v2"
+    selected = [manager.datasets()["items"][0]["path"]]
+
+    result = manager.validate(yaml.safe_dump(document, sort_keys=False), "lazy-run", selected)
+    normalized = yaml.safe_load(result["normalized_yaml"])
+
+    assert normalized["policy"]["harness_protocol"] == "lazy-schema-v2"
+    assert result["resolved"]["harness_protocol"] == "lazy-schema-v2"
+
+
 def test_dataset_discovery_uses_only_canonical_malicious_shape(tmp_path: Path):
     valid = tmp_path / "dataset/finance/malicious/indirect/action_reversal/2/config.yaml"
     valid.parent.mkdir(parents=True)

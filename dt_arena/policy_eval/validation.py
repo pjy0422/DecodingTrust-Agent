@@ -30,7 +30,10 @@ class ValidationContext:
     @classmethod
     def from_view(cls, view: Any) -> ValidationContext:
         instruction = view.task.task_instruction
-        if isinstance(instruction, list):
+        trusted_count = getattr(view.task, "instruction_count", None)
+        if isinstance(trusted_count, int) and not isinstance(trusted_count, bool):
+            count = trusted_count
+        elif isinstance(instruction, list):
             count = len(instruction)
         elif isinstance(instruction, str) and instruction != "":
             count = 1

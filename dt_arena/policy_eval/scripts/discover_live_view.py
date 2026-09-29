@@ -64,7 +64,7 @@ def task_env(instances):
             os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
 
-async def live_view(snapshot):
+async def live_view(snapshot, *, expose_task_instruction: bool = True):
     from utils import task_setup
     from utils.task_executor import ScheduledTask, TaskExecutor, get_task_environments
 
@@ -87,7 +87,10 @@ async def live_view(snapshot):
             box["view"] = await build_episode_view(
                 snapshot,
                 LiveDtapCatalogProvider(task_runtime_id=rid),
-                projection_policy=ProjectionPolicy(expose_additional_information=False),
+                projection_policy=ProjectionPolicy(
+                    expose_task_instruction=expose_task_instruction,
+                    expose_additional_information=False,
+                ),
             )
         return 0
 

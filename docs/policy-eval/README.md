@@ -107,7 +107,15 @@ policy:
   engine: claude-code
   harness_protocol: lazy-schema-v2
   planning_strategy: current
+  expose_task_instruction: true
 ```
+
+`expose_task_instruction` defaults to `true`. For indirect tasks this includes
+the original benign `Task.task_instruction` in `get_task_spec`, alongside the
+malicious goal, so the policy can align an injection with the victim's natural
+workflow. Setting it to `false` hides that field. Direct tasks always hide the
+original instruction and expose only the malicious goal, regardless of the
+setting.
 
 `v1` is the frozen six-tool reproduction baseline. `lazy-schema-v2` uses seven
 tools: `get_attack_surface` returns channel/mode and tool-name/description

@@ -7,6 +7,10 @@ export const EXPERIMENT_CONTROL_OPTIONS = Object.freeze({
     ['v1','v1 · frozen six-tool control'],
     ['lazy-schema-v2','lazy-schema-v2 · seven tools'],
   ]),
+  taskInstructionExposure: Object.freeze([
+    ['true','On · show indirect original task'],
+    ['false','Off · malicious goal only'],
+  ]),
   planningStrategy: Object.freeze([
     ['current','current'],
     ['authority-inversion-v2','authority-inversion-v2 · verifiable-fact meta-authority'],

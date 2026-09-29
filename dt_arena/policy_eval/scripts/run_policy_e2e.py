@@ -337,7 +337,10 @@ async def _main(args) -> None:
             policy_prompt_text,
             encoding="utf-8",
         )
-    view = await live_view(snapshot)
+    view = await live_view(
+        snapshot,
+        expose_task_instruction=args.expose_task_instruction,
+    )
     source_turns = (
         yaml.safe_load((snapshot.task_dir / "config.yaml").read_text(encoding="utf-8"))
         .get("Attack", {})
@@ -397,6 +400,10 @@ async def _main(args) -> None:
                     "policy_reporting": {
                         "improvement_wishes": args.improvement_wishes,
                         "dying_message": args.dying_message,
+                    },
+                    "policy_context": {
+                        "expose_task_instruction": args.expose_task_instruction,
+                        "task_instruction_exposed": view.task.task_instruction is not None,
                     },
                     "harness_protocol": args.harness_protocol,
                 },
@@ -661,6 +668,8 @@ async def _main(args) -> None:
                 "improvement_wishes_enabled": args.improvement_wishes,
                 "dying_message_enabled": args.dying_message,
                 "harness_protocol": args.harness_protocol,
+                "expose_task_instruction": args.expose_task_instruction,
+                "task_instruction_exposed": view.task.task_instruction is not None,
                 "digestor_usage": (digest_completer.usage.to_dict() if digest_completer else None),
                 "artifacts_dir": str(artifacts_dir) if artifacts_dir else None,
             }
@@ -710,6 +719,15 @@ def main() -> None:
         choices=HARNESS_PROTOCOLS,
         default=HARNESS_PROTOCOL_V1,
         help="policy-facing MCP contract; v1 remains the frozen reproduction baseline",
+    )
+    parser.add_argument(
+        "--expose-task-instruction",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "show the original task instruction to the policy for indirect tasks; "
+            "direct tasks always expose only the malicious goal"
+        ),
     )
     parser.add_argument(
         "--improvement-wishes",

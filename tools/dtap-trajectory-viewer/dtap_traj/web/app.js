@@ -21,7 +21,7 @@ const state = {
     token: sessionStorage.getItem('dtap-launch-token')||'', templates: [], template: '',
     yaml: '', runName: '', jobs: [], selectedJob: null, validation: null, message: '', loading: false,
     datasets: [], selectedTasks: new Set(), maxParallel: 16, datasetQuery: '',
-    datasetSyncRevision: 0,
+    datasetSyncRevision: 0, yamlRevision: 0,
     datasetFocus: {domain:'',threat_model:'',risk_category:''},
   },
 };
@@ -54,7 +54,7 @@ async function loadExperimentWorkspace(){
 }
 async function loadExperimentTemplate(name){
   const exp=state.experiments;const data=await experimentApi(`/api/experiments/templates/${encodeURIComponent(name)}`);
-  exp.template=data.name;exp.yaml=data.yaml;exp.validation=null;exp.selectedTasks.clear();
+  exp.template=data.name;exp.yaml=data.yaml;exp.yamlRevision+=1;exp.validation=null;exp.selectedTasks.clear();
   if(!exp.runName)exp.runName=nextAutoRunName();
 }
 function experimentControlValue(section,key,fallback){return readYamlControl(state.experiments.yaml,section,key,fallback);}
@@ -66,6 +66,7 @@ function syncExperimentControlElements(){
   const values={
     experimentPolicyEngine:experimentControlValue('policy','engine','claude-code'),
     experimentHarnessProtocol:experimentControlValue('policy','harness_protocol','v1'),
+    experimentTaskInstruction:experimentControlValue('policy','expose_task_instruction','true'),
     experimentPlanningStrategy:experimentControlValue('policy','planning_strategy','current'),
     experimentVictimHarness:experimentControlValue('victim','harness','openclaw'),
     experimentFeedbackMode:experimentControlValue('feedback','mode','disabled'),
@@ -78,21 +79,23 @@ function syncExperimentControlElements(){
   });
 }
 function updateExperimentControl(section,key,value,label){
-  const exp=state.experiments;exp.yaml=writeYamlControl(exp.yaml,section,key,value);exp.validation=null;exp.message=`${label} set to ${value}; config.yaml updated.`;render();
+  const exp=state.experiments;exp.yaml=writeYamlControl(exp.yaml,section,key,value);exp.yamlRevision+=1;exp.validation=null;exp.message=`${label} set to ${value}; config.yaml updated.`;render();
 }
 async function validateExperiment(){
-  const exp=state.experiments;exp.message='Validating…';render();
-  try{const payload={yaml:exp.yaml,run_name:exp.runName,tasks:[...exp.selectedTasks]};exp.validation=await experimentApi('/api/experiments/validate',{method:'POST',body:JSON.stringify(payload)});exp.yaml=exp.validation.normalized_yaml;exp.message=`Configuration is valid. ${exp.selectedTasks.size?`${exp.selectedTasks.size} exact tasks will run with up to ${exp.maxParallel} workers.`:'YAML profile selection will be used.'}`;}
+  const exp=state.experiments;const yamlRevision=exp.yamlRevision;const yaml=exp.yaml;exp.message='Validating…';render();
+  try{const payload={yaml,run_name:exp.runName,tasks:[...exp.selectedTasks]};const checked=await experimentApi('/api/experiments/validate',{method:'POST',body:JSON.stringify(payload)});if(yamlRevision!==exp.yamlRevision){exp.message='Configuration changed while validation was running; stale result ignored.';render();return;}exp.validation=checked;exp.yaml=checked.normalized_yaml;exp.yamlRevision+=1;exp.message=`Configuration is valid. ${exp.selectedTasks.size?`${exp.selectedTasks.size} exact tasks will run with up to ${exp.maxParallel} workers.`:'YAML profile selection will be used.'}`;}
   catch(error){exp.validation=null;exp.message=error.message;}render();
 }
 async function syncDatasetSelection(){
-  const exp=state.experiments;const revision=++exp.datasetSyncRevision;
+  const exp=state.experiments;const revision=++exp.datasetSyncRevision;const yamlRevision=exp.yamlRevision;const yaml=exp.yaml;
   exp.validation=null;exp.message='Updating config.yaml from dataset selection…';render();
   try{
-    const payload={yaml:exp.yaml,run_name:exp.runName,tasks:[...exp.selectedTasks]};
+    const payload={yaml,run_name:exp.runName,tasks:[...exp.selectedTasks]};
     const checked=await experimentApi('/api/experiments/validate',{method:'POST',body:JSON.stringify(payload)});
     if(revision!==exp.datasetSyncRevision)return;
+    if(yamlRevision!==exp.yamlRevision){void syncDatasetSelection();return;}
     exp.yaml=checked.normalized_yaml;exp.validation=checked;
+    exp.yamlRevision+=1;
     exp.message=exp.selectedTasks.size?`${exp.selectedTasks.size} exact task${exp.selectedTasks.size===1?'':'s'} written to config.yaml; max_parallel is ${exp.maxParallel}.`:'Exact task selection cleared from config.yaml.';
   }catch(error){
     if(revision!==exp.datasetSyncRevision)return;
@@ -530,12 +533,13 @@ function experimentWorkspace(){
   const progressSummary=progress?`<div class="job-progress-summary"><span><b>${progress.total}</b> total</span><span><b>${progress.completed}</b> completed</span><span><b>${progress.running}</b> running</span><span><b>${progress.queued}</b> queued</span><span><b>${progress.failed}</b> failed</span></div><div class="job-task-list">${taskRows||'<div class="empty compact">No resolved tasks.</div>'}</div>`:'';
   const policyEngine=experimentControlValue('policy','engine','claude-code');
   const harnessProtocol=experimentControlValue('policy','harness_protocol','v1');
+  const taskInstructionExposure=experimentControlValue('policy','expose_task_instruction','true');
   const planningStrategy=experimentControlValue('policy','planning_strategy','current');
   const victimHarness=experimentControlValue('victim','harness','openclaw');
   const feedbackMode=experimentControlValue('feedback','mode','disabled');
   const nativeEngine=policyEngine==='dt-arms-upstream';
   const victimHarnessOptions=nativeEngine?EXPERIMENT_CONTROL_OPTIONS.dtArmsVictimHarness:EXPERIMENT_CONTROL_OPTIONS.victimHarness;
-  return `<main class="experiment-workspace"><div class="experiment-primary">${datasetPicker()}<section class="launcher-card editor-card"><div class="launcher-title"><div><h1>Run policy evaluation</h1><p>Edit a strict experiment-v1 YAML. Click-selected tasks and runtime controls are written into the config immediately.</p></div><button id="lockLauncher">Lock</button></div><div class="launcher-fields"><label>Template<select id="experimentTemplate">${templateOptions}</select></label><label>Run name<input id="experimentRunName" value="${esc(exp.runName)}" maxlength="80"></label></div><div class="launcher-fields runtime-fields"><label>Policy engine<select id="experimentPolicyEngine">${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.policyEngine,policyEngine)}</select></label><label class="${nativeEngine?'legacy-control':''}">Policy protocol<select id="experimentHarnessProtocol" ${nativeEngine?'disabled':''}>${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.harnessProtocol,harnessProtocol)}</select></label><label class="${nativeEngine?'legacy-control':''}">Planning strategy<select id="experimentPlanningStrategy" ${nativeEngine?'disabled':''}>${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.planningStrategy,planningStrategy)}</select></label><label>Victim harness<select id="experimentVictimHarness">${experimentControlOptions(victimHarnessOptions,victimHarness)}</select></label><label class="${nativeEngine?'legacy-control':''}">Feedback mode<select id="experimentFeedbackMode" ${nativeEngine?'disabled':''}>${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.feedbackMode,feedbackMode)}</select></label></div><p class="runtime-control-note">${nativeEngine?'DT Arms runs its pinned native red-team loop; a successful candidate is replayed once by the DTAP evaluator. Claude protocol, planning, and feedback controls apply only to the legacy engine.':'Claude Code uses the selected policy protocol, planning strategy, and feedback mode.'} Optional victim harness dependencies are checked when the run starts.</p><label>config.yaml<textarea id="experimentYaml" spellcheck="false">${esc(exp.yaml)}</textarea></label><div class="launcher-actions"><button id="validateExperiment">Validate + normalize</button><button id="launchExperiment" class="primary">Run E2E</button></div><div class="launcher-message">${esc(exp.message||'Changes are not submitted until Run E2E is confirmed.')}</div>${exp.validation?`<details><summary>Resolved configuration</summary><pre>${esc(JSON.stringify(exp.validation.resolved,null,2))}</pre></details>`:''}</section></div><section class="launcher-card jobs-card"><div class="launcher-title"><div><h2>Experiment jobs</h2><p>Task progress updates when Refresh is clicked. Completed artifacts appear automatically in Trajectories.</p></div><button id="refreshJobs">Refresh</button></div><div class="job-list">${jobs}</div>${detail?`<div class="job-detail"><h3>${esc(detail.run_name)} · ${esc(detail.status)}</h3><p>${esc(detail.artifact_path)}</p>${progressSummary}<details><summary>Runner logs</summary><pre>${esc(detail.log_tail||'Waiting for runner output…')}</pre></details></div>`:''}</section></main>`;
+  return `<main class="experiment-workspace"><div class="experiment-primary">${datasetPicker()}<section class="launcher-card editor-card"><div class="launcher-title"><div><h1>Run policy evaluation</h1><p>Edit a strict experiment-v1 YAML. Click-selected tasks and runtime controls are written into the config immediately.</p></div><button id="lockLauncher">Lock</button></div><div class="launcher-fields"><label>Template<select id="experimentTemplate">${templateOptions}</select></label><label>Run name<input id="experimentRunName" value="${esc(exp.runName)}" maxlength="80"></label></div><div class="launcher-fields runtime-fields"><label>Policy engine<select id="experimentPolicyEngine">${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.policyEngine,policyEngine)}</select></label><label class="${nativeEngine?'legacy-control':''}">Policy protocol<select id="experimentHarnessProtocol" ${nativeEngine?'disabled':''}>${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.harnessProtocol,harnessProtocol)}</select></label><label class="${nativeEngine?'legacy-control':''}">Indirect task context<select id="experimentTaskInstruction" ${nativeEngine?'disabled':''}>${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.taskInstructionExposure,taskInstructionExposure)}</select></label><label class="${nativeEngine?'legacy-control':''}">Planning strategy<select id="experimentPlanningStrategy" ${nativeEngine?'disabled':''}>${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.planningStrategy,planningStrategy)}</select></label><label>Victim harness<select id="experimentVictimHarness">${experimentControlOptions(victimHarnessOptions,victimHarness)}</select></label><label class="${nativeEngine?'legacy-control':''}">Feedback mode<select id="experimentFeedbackMode" ${nativeEngine?'disabled':''}>${experimentControlOptions(EXPERIMENT_CONTROL_OPTIONS.feedbackMode,feedbackMode)}</select></label></div><p class="runtime-control-note">${nativeEngine?'DT Arms runs its pinned native red-team loop; a successful candidate is replayed once by the DTAP evaluator. Claude protocol, planning, task-context, and feedback controls apply only to the legacy engine.':'Claude Code uses the selected policy protocol, planning strategy, indirect task context, and feedback mode.'} Optional victim harness dependencies are checked when the run starts.</p><label>config.yaml<textarea id="experimentYaml" spellcheck="false">${esc(exp.yaml)}</textarea></label><div class="launcher-actions"><button id="validateExperiment">Validate + normalize</button><button id="launchExperiment" class="primary">Run E2E</button></div><div class="launcher-message">${esc(exp.message||'Changes are not submitted until Run E2E is confirmed.')}</div>${exp.validation?`<details><summary>Resolved configuration</summary><pre>${esc(JSON.stringify(exp.validation.resolved,null,2))}</pre></details>`:''}</section></div><section class="launcher-card jobs-card"><div class="launcher-title"><div><h2>Experiment jobs</h2><p>Task progress updates when Refresh is clicked. Completed artifacts appear automatically in Trajectories.</p></div><button id="refreshJobs">Refresh</button></div><div class="job-list">${jobs}</div>${detail?`<div class="job-detail"><h3>${esc(detail.run_name)} · ${esc(detail.status)}</h3><p>${esc(detail.artifact_path)}</p>${progressSummary}<details><summary>Runner logs</summary><pre>${esc(detail.log_tail||'Waiting for runner output…')}</pre></details></div>`:''}</section></main>`;
 }
 function bind(){
   document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>{
@@ -548,10 +552,11 @@ function bind(){
     $('#experimentRunName')?.addEventListener('input',event=>{state.experiments.runName=event.target.value;});
     $('#experimentPolicyEngine')?.addEventListener('change',event=>updateExperimentControl('policy','engine',event.target.value,'Policy engine'));
     $('#experimentHarnessProtocol')?.addEventListener('change',event=>updateExperimentControl('policy','harness_protocol',event.target.value,'Policy protocol'));
+    $('#experimentTaskInstruction')?.addEventListener('change',event=>updateExperimentControl('policy','expose_task_instruction',event.target.value,'Indirect task context'));
     $('#experimentPlanningStrategy')?.addEventListener('change',event=>updateExperimentControl('policy','planning_strategy',event.target.value,'Planning strategy'));
     $('#experimentVictimHarness')?.addEventListener('change',event=>updateExperimentControl('victim','harness',event.target.value,'Victim harness'));
     $('#experimentFeedbackMode')?.addEventListener('change',event=>updateExperimentControl('feedback','mode',event.target.value,'Feedback mode'));
-    $('#experimentYaml')?.addEventListener('input',event=>{state.experiments.yaml=event.target.value;state.experiments.validation=null;syncExperimentControlElements();});
+    $('#experimentYaml')?.addEventListener('input',event=>{state.experiments.yaml=event.target.value;state.experiments.yamlRevision+=1;state.experiments.validation=null;syncExperimentControlElements();});
     document.querySelectorAll('[data-dataset-level]').forEach(button=>button.addEventListener('click',()=>{const exp=state.experiments;const level=button.dataset.datasetLevel;exp.datasetFocus[level]=button.dataset.datasetValue;if(level==='domain'){exp.datasetFocus.threat_model='';exp.datasetFocus.risk_category='';}else if(level==='threat_model'){exp.datasetFocus.risk_category='';}initializeDatasetFocus();render();}));
     document.querySelectorAll('[data-dataset-task]').forEach(input=>input.addEventListener('change',()=>{const selected=state.experiments.selectedTasks;if(input.checked)selected.add(input.dataset.datasetTask);else selected.delete(input.dataset.datasetTask);syncDatasetSelection();}));
     document.querySelectorAll('[data-remove-task]').forEach(button=>button.addEventListener('click',()=>{state.experiments.selectedTasks.delete(button.dataset.removeTask);syncDatasetSelection();}));
