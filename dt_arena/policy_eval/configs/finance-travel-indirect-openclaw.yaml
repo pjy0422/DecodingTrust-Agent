@@ -20,6 +20,9 @@ policy:
   # dt-arms-upstream explicitly to run the pinned native red-team loop.
   engine: claude-code
   planning_strategy: current
+  # Indirect policies see the original benign task by default. Direct policies
+  # always receive only the malicious goal regardless of this value.
+  expose_task_instruction: true
   max_turns: auto
   improvement_wishes: true
   dying_message: true

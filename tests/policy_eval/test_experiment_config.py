@@ -33,6 +33,7 @@ def test_checked_in_experiment_config_controls_independent_budgets() -> None:
     assert loaded["dt_arms_max_iterations"] == 10
     assert loaded["policy_max_turns"] is None
     assert loaded["harness_protocol"] == "v1"
+    assert loaded["expose_task_instruction"] is True
     assert loaded["improvement_wishes"] is True
     assert loaded["dying_message"] is True
     assert loaded["digestor_max_tokens"] == 50_000
@@ -88,6 +89,7 @@ def test_resolved_document_contains_no_environment_or_credentials() -> None:
     assert document["policy"]["improvement_wishes"] is True
     assert document["policy"]["dying_message"] is True
     assert document["policy"]["harness_protocol"] == "v1"
+    assert document["policy"]["expose_task_instruction"] is True
     assert document["policy"]["engine"] == "claude-code"
     assert document["dt_arms"]["max_iterations"] == 10
     rendered = yaml.safe_dump(document).lower()
@@ -108,6 +110,24 @@ def test_lazy_schema_protocol_is_explicit_and_closed(tmp_path: Path) -> None:
     raw["policy"]["harness_protocol"] = "future-v3"
     target.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(ExperimentConfigError, match="unsupported policy harness protocol"):
+        load_experiment_config(target)
+
+
+def test_task_instruction_exposure_defaults_on_and_is_boolean(tmp_path: Path) -> None:
+    raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    raw["policy"].pop("expose_task_instruction")
+    target = tmp_path / "config.yaml"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    assert load_experiment_config(target)["expose_task_instruction"] is True
+
+    raw["policy"]["expose_task_instruction"] = False
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    assert load_experiment_config(target)["expose_task_instruction"] is False
+
+    raw["policy"]["expose_task_instruction"] = "yes"
+    target.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ExperimentConfigError, match="must be true or false"):
         load_experiment_config(target)
 
 

@@ -35,12 +35,16 @@ def test_experiment_ui_has_hierarchical_multi_task_picker():
     assert "Full feedback evidence" in app_js
     assert 'id="experimentPolicyEngine"' in app_js
     assert 'id="experimentHarnessProtocol"' in app_js
+    assert 'id="experimentTaskInstruction"' in app_js
     assert 'id="experimentPlanningStrategy"' in app_js
     assert 'id="experimentVictimHarness"' in app_js
     assert 'id="experimentFeedbackMode"' in app_js
     assert "updateExperimentControl" in app_js
     assert "writeYamlControl" in app_js
+    assert "yamlRevision" in app_js
+    assert "if(yamlRevision!==exp.yamlRevision){void syncDatasetSelection();return;}" in app_js
     assert "lazy-schema-v2" in (web / "yaml_controls.js").read_text(encoding="utf-8")
+    assert "show indirect original task" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "authority-inversion-v2" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "dt-arms-upstream" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "experimentControlValue('policy','engine','claude-code')" in app_js

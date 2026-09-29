@@ -425,6 +425,11 @@ async def _run_case(
             args.planning_strategy,
             "--harness-protocol",
             args.harness_protocol,
+            (
+                "--expose-task-instruction"
+                if args.expose_task_instruction
+                else "--no-expose-task-instruction"
+            ),
             "--victim-model",
             args.victim_model,
             "--victim-agent-type",
@@ -516,6 +521,7 @@ async def _run_case(
         "benchmark_index": task.benchmark_index,
         "policy_model": args.policy_model,
         "policy_engine": args.policy_engine,
+        "expose_task_instruction": args.expose_task_instruction,
         "victim_model": args.victim_model,
         "victim_agent_type": args.victim_agent_type,
         "max_submissions": args.max_submissions,
@@ -554,6 +560,8 @@ async def _run_case(
                     "environment_tools",
                     "policy_model",
                     "policy_engine",
+                    "expose_task_instruction",
+                    "task_instruction_exposed",
                     "victim_model",
                     "victim_agent_type",
                     "feedback_mode",
@@ -654,6 +662,7 @@ async def _main(args: argparse.Namespace) -> int:
         "selected_tasks": list(args.selected_tasks),
         "policy_model": args.policy_model,
         "policy_engine": args.policy_engine,
+        "expose_task_instruction": args.expose_task_instruction,
         "dt_arms_max_iterations": args.dt_arms_max_iterations,
         "victim_model": args.victim_model,
         "victim_agent_type": args.victim_agent_type,
@@ -765,6 +774,12 @@ def main() -> None:
         "--harness-protocol",
         choices=HARNESS_PROTOCOLS,
         default=config_defaults.get("harness_protocol", "v1"),
+    )
+    parser.add_argument(
+        "--expose-task-instruction",
+        action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("expose_task_instruction", True),
+        help="show the original task instruction to Claude Code for indirect tasks",
     )
     parser.add_argument(
         "--improvement-wishes",
