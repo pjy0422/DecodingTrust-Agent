@@ -21,6 +21,7 @@ def test_experiment_ui_has_hierarchical_multi_task_picker():
     web = Path(__file__).parents[1] / "dtap_traj" / "web"
     app_js = (web / "app.js").read_text(encoding="utf-8")
     css = (web / "app.css").read_text(encoding="utf-8")
+    index = (web / "index.html").read_text(encoding="utf-8")
 
     assert "/api/experiments/datasets" in app_js
     assert "syncDatasetSelection" in app_js
@@ -45,6 +46,8 @@ def test_experiment_ui_has_hierarchical_multi_task_picker():
     assert "if(yamlRevision!==exp.yamlRevision){void syncDatasetSelection();return;}" in app_js
     assert "lazy-schema-v2" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "show indirect original task" in (web / "yaml_controls.js").read_text(encoding="utf-8")
+    assert "app.js?v=task-context-state-1" in index
+    assert "yaml_controls.js?v=task-context-state-1" in app_js
     assert "authority-inversion-v2" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "dt-arms-upstream" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "experimentControlValue('policy','engine','claude-code')" in app_js
