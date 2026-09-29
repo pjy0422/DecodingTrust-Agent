@@ -1,4 +1,4 @@
-import {EXPERIMENT_CONTROL_OPTIONS,readYamlControl,writeYamlControl} from './yaml_controls.js';
+import {EXPERIMENT_CONTROL_OPTIONS,readYamlControl,writeYamlControl} from './yaml_controls.js?v=task-context-state-1';
 
 const MODES = new Set(['trajectories','performance','experiments']);
 function modeFromLocation(){
