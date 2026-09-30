@@ -98,8 +98,15 @@ def _restored_environment(values: dict[str, str]):
                 os.environ[key] = value
 
 
-async def _run(args) -> int:
-    _configure_victim_provider(args.model)
+async def _run(
+    args,
+    *,
+    executor=None,
+    configure_provider: bool = True,
+    reusable_services=None,
+) -> int:
+    if configure_provider:
+        _configure_victim_provider(args.model)
     from dt_arena.src.types.task import AttackConfig, TaskConfig
     from eval.task_runner import run_single_task
     from utils.task_executor import ScheduledTask, TaskExecutor, get_task_environments
@@ -115,7 +122,9 @@ async def _run(args) -> int:
         risk_category=getattr(attack_cfg, "risk_category", None),
         task_id=getattr(task_cfg, "task_id", None),
     )
-    executor = TaskExecutor(max_parallel=1)
+    owns_executor = executor is None
+    if executor is None:
+        executor = TaskExecutor(max_parallel=1)
     auxiliary_mode = os.environ.pop(MEDICAL_AUX_MODE_ENV, "")
     victim_credentials: dict[str, str] = {}
     if getattr(task_cfg, "domain", None) == "medical" and auxiliary_mode == "deterministic":
@@ -145,6 +154,7 @@ async def _run(args) -> int:
                     skip_judge=False,
                     debug=args.debug,
                     direct_prompt=False,
+                    reusable_services=reusable_services,
                 )
 
     try:
@@ -171,7 +181,12 @@ async def _run(args) -> int:
                     temporary.replace(args.verdict_path)
         return int(results[0][1])
     finally:
-        await executor.shutdown()
+        # The one-shot child used to exit here. An episode-scoped worker may
+        # run another H, so restore credentials temporarily hidden from the
+        # medical simulator before accepting the next request.
+        os.environ.update(victim_credentials)
+        if owns_executor:
+            await executor.shutdown()
 
 
 def main() -> None:

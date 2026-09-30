@@ -192,12 +192,17 @@ class TaskExecutor:
     - Controls parallelism by max_parallel_tasks (not max environments)
     - Creates environment instances on demand
     - Reuses available instances when possible
-    - Stops instances when no pending task needs them
+    - Stops unused instances by default; optional episode reuse retains them
     - Respects per-environment instance limits (e.g., max 1 Windows VM)
     """
 
-    def __init__(self, max_parallel: int = 5):
+    def __init__(self, max_parallel: int = 5, *, retain_idle_instances: bool = False):
         self.max_parallel = max_parallel
+        # Long-lived callers may submit several batches to one executor. Keep
+        # released containers available between batches, while still running
+        # the normal reset path before every subsequent task. The default
+        # preserves the historical one-shot cleanup behaviour.
+        self.retain_idle_instances = retain_idle_instances
         self._lock = asyncio.Lock()
 
         # Task tracking
@@ -436,7 +441,7 @@ class TaskExecutor:
         timeout: int = 120,
     ) -> bool:
         """Wait for all containers in the project to be healthy."""
-        print(f"[EXECUTOR] Waiting for containers to be healthy...", flush=True)
+        print("[EXECUTOR] Waiting for containers to be healthy...", flush=True)
         start_time = time.time()
 
         while time.time() - start_time < timeout:
@@ -482,12 +487,12 @@ class TaskExecutor:
                     continue
 
             if all_healthy:
-                print(f"[EXECUTOR] All containers healthy", flush=True)
+                print("[EXECUTOR] All containers healthy", flush=True)
                 return True
 
             await asyncio.sleep(2)
 
-        print(f"[EXECUTOR] Timeout waiting for containers to be healthy", flush=True)
+        print("[EXECUTOR] Timeout waiting for containers to be healthy", flush=True)
         return False
 
     async def _stop_instance(self, instance: EnvInstance) -> bool:
@@ -755,6 +760,8 @@ class TaskExecutor:
 
     async def _cleanup_unused_instances(self, released_envs: Set[str]) -> None:
         """Stop instances for environments no longer needed by pending tasks."""
+        if self.retain_idle_instances:
+            return
         needed_envs = self._get_needed_envs()
 
         for env_name in released_envs:

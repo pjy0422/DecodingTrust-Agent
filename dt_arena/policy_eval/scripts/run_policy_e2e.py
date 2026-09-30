@@ -377,6 +377,7 @@ async def _main(args) -> None:
         scheduler=scheduler,
         port_range_start=args.port_range_start,
         extra_env={},
+        attempt_runtime=args.attempt_runtime,
     )
     runner = RecordingRunner(real_runner, artifacts_dir=artifacts_dir)
     placement = None
@@ -406,6 +407,7 @@ async def _main(args) -> None:
                         "task_instruction_exposed": view.task.task_instruction is not None,
                     },
                     "harness_protocol": args.harness_protocol,
+                    "attempt_runtime": args.attempt_runtime,
                 },
                 indent=2,
                 sort_keys=True,
@@ -668,6 +670,8 @@ async def _main(args) -> None:
                 "improvement_wishes_enabled": args.improvement_wishes,
                 "dying_message_enabled": args.dying_message,
                 "harness_protocol": args.harness_protocol,
+                "attempt_runtime": args.attempt_runtime,
+                "attempt_runtime_metrics": dict(real_runner.runtime_metrics),
                 "expose_task_instruction": args.expose_task_instruction,
                 "task_instruction_exposed": view.task.task_instruction is not None,
                 "digestor_usage": (digest_completer.usage.to_dict() if digest_completer else None),
@@ -675,6 +679,7 @@ async def _main(args) -> None:
             }
             _emit_result(result, artifacts_dir)
         finally:
+            await real_runner.aclose()
             server_task.cancel()
             with suppress(asyncio.CancelledError):
                 await server_task
@@ -743,6 +748,12 @@ def main() -> None:
     )
     parser.add_argument("--claude-bin", default="claude")
     parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument(
+        "--attempt-runtime",
+        choices=("warm", "cold"),
+        default="warm",
+        help="reuse one isolated DTAP worker and environment pool across H attempts",
+    )
     parser.add_argument("--placement", dest="placement_enabled", action="store_true")
     parser.add_argument(
         "--feedback-mode",

@@ -46,8 +46,11 @@ def test_experiment_ui_has_hierarchical_multi_task_picker():
     assert "if(yamlRevision!==exp.yamlRevision){void syncDatasetSelection();return;}" in app_js
     assert "lazy-schema-v2" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "show indirect original task" in (web / "yaml_controls.js").read_text(encoding="utf-8")
-    assert "app.js?v=task-context-state-1" in index
-    assert "yaml_controls.js?v=task-context-state-1" in app_js
+    assert "app.js?v=warm-h-runtime-1" in index
+    assert "yaml_controls.js?v=warm-h-runtime-1" in app_js
+    assert 'id="experimentAttemptRuntime"' in app_js
+    assert 'id="experimentAttemptRuntime" ${nativeEngine?\'disabled\':\'\'}' in app_js
+    assert "Warm · reuse runtime and MCP processes" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "authority-inversion-v2" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "dt-arms-upstream" in (web / "yaml_controls.js").read_text(encoding="utf-8")
     assert "experimentControlValue('policy','engine','claude-code')" in app_js

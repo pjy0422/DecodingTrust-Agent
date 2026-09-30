@@ -92,6 +92,31 @@ The `budgets` section controls three independent limits:
 - `max_placement_actions`: consumed by `apply_attack_step`; placement
   validation itself does not consume this budget.
 
+H execution startup is controlled independently:
+
+```yaml
+execution:
+  attempt_runtime: warm  # default; use cold for one-process-per-H comparison
+```
+
+`warm` owns one isolated DTAP worker for the episode and reuses compatible
+victim/environment MCP processes plus TaskExecutor environment containers.
+Before every H it still performs the normal environment reset and task setup,
+then constructs a fresh victim agent and runs a fresh judge. Thus DB state,
+victim conversation context, and verdict state do not cross H boundaries. If
+the warm worker fails before victim execution begins, the runner falls back to
+the historical cold path; it never repeats an H that may already have started.
+The resolved experiment and result artifacts record the selected mode and
+reuse/fallback counters.
+
+A two-attempt OpenClaw smoke on
+`travel/malicious/indirect/off-platform-payments/014` with
+`deepseek-v4.1-flash` completed both judges using one worker PID. The second
+attempt reused the travel container and both MCP server groups; observed times
+were 39.9 s and 16.2 s. Hosted model latency varies, so these are observed
+end-to-end times rather than an isolated runtime speedup estimate. Use
+`execution.attempt_runtime: cold` for a direct comparison on your own workload.
+
 The policy MCP contract is selected independently from the planning strategy:
 
 ```yaml

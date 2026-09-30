@@ -8,6 +8,8 @@ import os
 import re
 import signal
 import sys
+import time
+import uuid
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -56,11 +58,11 @@ class AttemptResult:
 
 
 class DtapAttemptRunner:
-    """Run one candidate via a fresh DTAP subprocess and consume its judge file.
+    """Run candidates through an isolated DTAP subprocess and consume judge files.
 
-    A subprocess is deliberately used as the reset primitive: DTAP module globals,
-    ResourceManager state, victim context, and Docker-pool lifetime are not shared
-    between H-counted victim executions.
+    Cold mode creates one subprocess per H. Warm mode keeps one process,
+    TaskExecutor pool, and compatible MCP services for the episode, while each
+    H still resets its environments and creates a fresh victim and judge run.
     """
 
     def __init__(
@@ -80,6 +82,7 @@ class DtapAttemptRunner:
         scheduler: AttemptScheduler | None = None,
         port_range_start: int = 20_000,
         port_pool: PortRangePool | None = None,
+        attempt_runtime: str = "cold",
     ) -> None:
         if isinstance(max_parallel, bool) or max_parallel < 1:
             raise ValueError("max_parallel must be positive")
@@ -101,6 +104,20 @@ class DtapAttemptRunner:
         if port_range_start < 1024 or port_range_start + 511 > 65535:
             raise ValueError("port_range_start must reserve 512 valid user ports")
         self.port_range_start = port_range_start
+        if attempt_runtime not in {"cold", "warm"}:
+            raise ValueError("attempt_runtime must be 'cold' or 'warm'")
+        if attempt_runtime == "warm" and max_parallel != 1:
+            raise ValueError("warm attempt runtime requires max_parallel=1")
+        self.attempt_runtime = attempt_runtime
+        self._warm_process: Any | None = None
+        self._warm_stack: AsyncExitStack | None = None
+        self._warm_lock = asyncio.Lock()
+        self._warm_runtime_identity: str | None = None
+        self._warm_fallbacks = 0
+        self._warm_worker_starts = 0
+        self._warm_attempts = 0
+        self._warm_disabled = False
+        self._attempt_durations_seconds: list[float] = []
         if security_policy is not None:
             if scheduler is None:
                 raise ValueError("M4 requires one explicit worker-scoped scheduler")
@@ -140,11 +157,12 @@ class DtapAttemptRunner:
             command.extend(["--temperature", str(self.temperature)])
         if self.debug:
             command.append("--debug")
+        command.extend(
+            ["--started-path", str(workspace.output_root / ".m4-started")]
+        )
         if self.security_policy is not None:
             command.extend(
                 [
-                    "--started-path",
-                    str(workspace.output_root / ".m4-started"),
                     "--verdict-path",
                     str(workspace.output_root / ".m4-verdict.json"),
                 ]
@@ -216,7 +234,175 @@ class DtapAttemptRunner:
                 matches.append(resolved)
         return matches[0] if len(matches) == 1 else None
 
+    def _worker_command(self) -> list[str]:
+        helper = Path(__file__).resolve().parent / "scripts" / "run_dtap_attempt_worker.py"
+        return [self.python_executable, str(helper), "--model", self.model]
+
+    async def _start_warm_worker(self) -> Any:
+        if self._warm_process is not None and self._warm_process.returncode is None:
+            return self._warm_process
+        stack = AsyncExitStack()
+        await stack.__aenter__()
+        process = None
+        try:
+            if self.security_policy is None:
+                env = os.environ.copy()
+                env.update(self.extra_env)
+            else:
+                env = self.security_policy.build_dtap_child_env(explicit_env=self.extra_env)
+                assert self.port_pool is not None
+                port_start, port_end = await stack.enter_async_context(self.port_pool.lease())
+                env["DT_DISABLE_DEFAULT_PORTS"] = "1"
+                env["DT_PORT_RANGE_START"] = str(port_start)
+                env["DT_PORT_RANGE_END"] = str(port_end)
+            process = await asyncio.create_subprocess_exec(
+                *self._worker_command(),
+                cwd=str(self.dtap_root) if self.dtap_root is not None else None,
+                env=env,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+                limit=8 * 1024 * 1024,
+            )
+            assert process.stdout is not None
+            while True:
+                line = await asyncio.wait_for(process.stdout.readline(), timeout=60)
+                if not line:
+                    raise RuntimeError("warm DTAP worker exited before ready")
+                if line.decode("utf-8", errors="replace").strip() == "[DTAP_WARM_READY]":
+                    break
+        except Exception:
+            if process is not None:
+                await self._kill_process_group(process)
+            await stack.aclose()
+            raise
+        self._warm_process = process
+        self._warm_stack = stack
+        self._warm_runtime_identity = str(process.pid)
+        self._warm_worker_starts += 1
+        return process
+
+    async def _stop_warm_worker(self, *, interrupt: bool = False) -> None:
+        process = self._warm_process
+        stack = self._warm_stack
+        self._warm_process = None
+        self._warm_stack = None
+        if process is not None and process.returncode is None:
+            try:
+                if interrupt:
+                    os.killpg(process.pid, signal.SIGINT)
+                else:
+                    assert process.stdin is not None
+                    process.stdin.write(b'{"command":"shutdown"}\n')
+                    await process.stdin.drain()
+                await asyncio.wait_for(process.communicate(), timeout=30)
+            except Exception:
+                await self._kill_process_group(process)
+        if stack is not None:
+            await stack.aclose()
+
+    async def aclose(self) -> None:
+        """Release the episode-scoped worker and all retained environments."""
+        async with self._warm_lock:
+            await self._stop_warm_worker()
+
+    @staticmethod
+    def _started_marker(workspace: AttemptWorkspace) -> bool:
+        started_path = workspace.output_root / ".m4-started"
+        try:
+            info = started_path.lstat()
+            return (
+                not started_path.is_symlink()
+                and info.st_size == 1
+                and started_path.read_bytes() == b"1"
+            )
+        except OSError:
+            return False
+
+    async def _run_warm_once(self, workspace: AttemptWorkspace) -> tuple[str, str | None, bool]:
+        process = await self._start_warm_worker()
+        self._warm_attempts += 1
+        request_id = uuid.uuid4().hex
+        payload = {
+            "command": "run",
+            "request_id": request_id,
+            "task_dir": str(workspace.task_dir),
+            "output_root": str(workspace.output_root),
+            "attempt_index": workspace.attempt_index,
+            "agent_type": self.agent_type,
+            "model": self.model,
+            "max_turns": self.max_turns,
+            "temperature": self.temperature,
+            "debug": self.debug,
+            "started_path": str(workspace.output_root / ".m4-started"),
+            "verdict_path": str(workspace.output_root / ".m4-verdict.json") if self.security_policy else None,
+        }
+        assert process.stdin is not None and process.stdout is not None
+        process.stdin.write((json.dumps(payload, sort_keys=True) + "\n").encode())
+        await process.stdin.drain()
+        async def receive() -> None:
+            while True:
+                raw = await process.stdout.readline()
+                if not raw:
+                    raise RuntimeError("warm DTAP worker exited during attempt")
+                line = raw.decode("utf-8", errors="replace")
+                if line.startswith("[DTAP_WARM_RESULT] "):
+                    response = json.loads(line.removeprefix("[DTAP_WARM_RESULT] "))
+                    if response.get("request_id") != request_id:
+                        raise RuntimeError("warm DTAP worker response identity mismatch")
+                    if response.get("error"):
+                        raise RuntimeError(str(response["error"]))
+                    return
+
+        if self.timeout_seconds is None:
+            await receive()
+        else:
+            await asyncio.wait_for(receive(), timeout=self.timeout_seconds)
+        return "", self._warm_runtime_identity, False
+
+    @property
+    def runtime_metrics(self) -> Mapping[str, Any]:
+        return {
+            "mode": self.attempt_runtime,
+            "effective_mode": "cold" if self._warm_disabled else self.attempt_runtime,
+            "warm_worker_starts": self._warm_worker_starts,
+            "warm_attempts": self._warm_attempts,
+            "warm_reused_attempts": max(0, self._warm_attempts - self._warm_worker_starts),
+            "warm_fallbacks": self._warm_fallbacks,
+            "attempt_durations_seconds": list(self._attempt_durations_seconds),
+        }
+
     async def _run_once(self, workspace: AttemptWorkspace) -> AttemptResult:
+        if self.attempt_runtime == "warm" and not self._warm_disabled:
+            workspace.output_root.mkdir(parents=True, exist_ok=True)
+            async with self._warm_lock:
+                try:
+                    output, runtime_identity, runtime_destroyed = await self._run_warm_once(workspace)
+                except asyncio.CancelledError:
+                    await self._stop_warm_worker(interrupt=True)
+                    raise
+                except Exception:
+                    started = self._started_marker(workspace)
+                    await self._stop_warm_worker(interrupt=True)
+                    if started:
+                        return AttemptResult.infrastructure_failure(
+                            stage="warm_runtime",
+                            evaluation_started=True,
+                            runtime_identity=self._warm_runtime_identity,
+                        )
+                    self._warm_fallbacks += 1
+                    self._warm_disabled = True
+                    return await self._run_cold_once(workspace)
+            return self._collect_result(
+                workspace,
+                output=output,
+                runtime_identity=runtime_identity,
+                runtime_destroyed=runtime_destroyed,
+            )
+        return await self._run_cold_once(workspace)
+
+    async def _run_cold_once(self, workspace: AttemptWorkspace) -> AttemptResult:
         workspace.output_root.mkdir(parents=True, exist_ok=True)
         async with AsyncExitStack() as stack:
             if self.security_policy is None:
@@ -253,7 +439,7 @@ class DtapAttemptRunner:
                     await self._kill_process_group(process)
                 return AttemptResult.infrastructure_failure(
                     stage="timeout",
-                    evaluation_started=False,
+                    evaluation_started=self._started_marker(workspace),
                     runtime_identity=runtime_identity,
                 )
             except asyncio.CancelledError:
@@ -265,13 +451,28 @@ class DtapAttemptRunner:
                     await self._kill_process_group(process)
                 return AttemptResult.infrastructure_failure(
                     stage="process_start",
-                    evaluation_started=False,
+                    evaluation_started=self._started_marker(workspace),
                     runtime_identity=runtime_identity,
                 )
 
             output = stdout.decode("utf-8", errors="replace")
             self._retain_stderr_diagnostic(workspace, stderr, env)
 
+        return self._collect_result(
+            workspace,
+            output=output,
+            runtime_identity=runtime_identity,
+            runtime_destroyed=True,
+        )
+
+    def _collect_result(
+        self,
+        workspace: AttemptWorkspace,
+        *,
+        output: str,
+        runtime_identity: str | None,
+        runtime_destroyed: bool,
+    ) -> AttemptResult:
         # Resolve artifact identity once, at the trusted attempt boundary, and
         # pass these exact paths to feedback/export consumers.  Never let those
         # consumers independently choose a different "first" or "latest" file.
@@ -281,7 +482,10 @@ class DtapAttemptRunner:
             "*.mcp-events.jsonl",
         )
         if self.security_policy is None:
-            evaluation_started = "[DTAP_STATUS] phase=running" in output
+            evaluation_started = (
+                "[DTAP_STATUS] phase=running" in output
+                or self._started_marker(workspace)
+            )
             try:
                 judge_path = find_single_judge_result(workspace.output_root)
             except VerdictError:
@@ -314,17 +518,10 @@ class DtapAttemptRunner:
                 trajectory_path=trajectory_path,
                 mcp_events_path=mcp_events_path,
                 runtime_identity=runtime_identity,
-                runtime_destroyed=True,
+                runtime_destroyed=runtime_destroyed,
             )
 
-        started_path = workspace.output_root / ".m4-started"
-        try:
-            started_info = started_path.lstat()
-            evaluation_started = (
-                not started_path.is_symlink() and started_info.st_size == 1 and started_path.read_bytes() == b"1"
-            )
-        except OSError:
-            evaluation_started = False
+        evaluation_started = self._started_marker(workspace)
         verdict_path = workspace.output_root / ".m4-verdict.json"
         try:
             assert self.verdict_reader is not None
@@ -344,17 +541,21 @@ class DtapAttemptRunner:
             trajectory_path=trajectory_path,
             mcp_events_path=mcp_events_path,
             runtime_identity=runtime_identity,
-            runtime_destroyed=True,
+            runtime_destroyed=runtime_destroyed,
         )
 
     async def run(self, workspace: AttemptWorkspace) -> AttemptResult:
-        if self.scheduler is not None:
-            try:
-                return await self.scheduler.run(lambda: self._run_once(workspace))
-            except SchedulerSaturated:
-                return AttemptResult.infrastructure_failure(
-                    stage="scheduler",
-                    evaluation_started=False,
-                )
-        async with self._semaphore:
-            return await self._run_once(workspace)
+        start = time.monotonic()
+        try:
+            if self.scheduler is not None:
+                try:
+                    return await self.scheduler.run(lambda: self._run_once(workspace))
+                except SchedulerSaturated:
+                    return AttemptResult.infrastructure_failure(
+                        stage="scheduler",
+                        evaluation_started=False,
+                    )
+            async with self._semaphore:
+                return await self._run_once(workspace)
+        finally:
+            self._attempt_durations_seconds.append(round(time.monotonic() - start, 3))

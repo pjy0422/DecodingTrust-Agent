@@ -446,6 +446,8 @@ async def _run_case(
             str(args.victim_max_turns),
             "--timeout",
             str(args.timeout),
+            "--attempt-runtime",
+            args.attempt_runtime,
             "--feedback-mode",
             args.feedback_mode,
             "--digestor-model",
@@ -527,6 +529,9 @@ async def _run_case(
         "max_submissions": args.max_submissions,
         "max_submit_calls": args.max_submit_calls,
         "max_placement_actions": args.max_placement_actions,
+        "attempt_runtime": (
+            args.attempt_runtime if args.policy_engine != POLICY_ENGINE_DT_ARMS else "dt-arms-native"
+        ),
         "dt_arms_max_iterations": args.dt_arms_max_iterations,
         "improvement_wishes_enabled": args.improvement_wishes,
         "dying_message_enabled": args.dying_message,
@@ -565,6 +570,7 @@ async def _run_case(
                     "victim_model",
                     "victim_agent_type",
                     "feedback_mode",
+                    "attempt_runtime_metrics",
                     "reasoning_summary_enabled",
                     "improvement_wishes_enabled",
                     "dying_message_enabled",
@@ -669,6 +675,9 @@ async def _main(args: argparse.Namespace) -> int:
         "max_submissions": args.max_submissions,
         "max_submit_calls": args.max_submit_calls,
         "max_placement_actions": args.max_placement_actions,
+        "attempt_runtime": (
+            args.attempt_runtime if args.policy_engine != POLICY_ENGINE_DT_ARMS else "dt-arms-native"
+        ),
         "placement_enabled": args.placement_enabled,
         "improvement_wishes_enabled": args.improvement_wishes,
         "dying_message_enabled": args.dying_message,
@@ -844,6 +853,11 @@ def main() -> None:
         default=config_defaults.get("reasoning_summary", False),
     )
     parser.add_argument("--timeout", type=int, default=config_defaults.get("timeout", 1800))
+    parser.add_argument(
+        "--attempt-runtime",
+        choices=("warm", "cold"),
+        default=config_defaults.get("attempt_runtime", "warm"),
+    )
     parser.add_argument(
         "--resume",
         action=argparse.BooleanOptionalAction,
