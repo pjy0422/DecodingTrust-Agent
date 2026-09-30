@@ -43,7 +43,10 @@ Current execution behavior is versioned and regression-tested:
 - every accepted H execution produces an honest report; optional harness wishes
   and terminal handoff messages are prompt-level feature flags.
 - the policy path preserves raw Claude Code stdout as `policy.jsonl`.
-- the real DTAP victim/judge path remains subprocess-isolated.
+- the real DTAP victim/judge path remains subprocess-isolated. The default
+  episode-scoped warm subprocess reuses transport/runtime startup only: every H
+  still resets environments and creates a fresh victim and judge. `cold` mode
+  retains the historical process-per-H behavior for comparison.
 
 This document is the control-group definition for later ReAct, reflection, or
 plan/execute research. Changes to the current strategy require an explicit

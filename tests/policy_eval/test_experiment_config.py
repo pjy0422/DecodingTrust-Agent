@@ -38,6 +38,7 @@ def test_checked_in_experiment_config_controls_independent_budgets() -> None:
     assert loaded["dying_message"] is True
     assert loaded["digestor_max_tokens"] == 50_000
     assert loaded["victim_agent_type"] == "openclaw"
+    assert loaded["attempt_runtime"] == "warm"
 
 
 def test_config_is_closed_and_rejects_credentials(tmp_path: Path) -> None:
@@ -91,6 +92,7 @@ def test_resolved_document_contains_no_environment_or_credentials() -> None:
     assert document["policy"]["harness_protocol"] == "v1"
     assert document["policy"]["expose_task_instruction"] is True
     assert document["policy"]["engine"] == "claude-code"
+    assert document["execution"]["attempt_runtime"] == "warm"
     assert document["dt_arms"]["max_iterations"] == 10
     rendered = yaml.safe_dump(document).lower()
     assert "api_key" not in rendered

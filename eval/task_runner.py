@@ -4,8 +4,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional, Dict, List
-import yaml
+from typing import Any, Optional, Dict, List
+from dataclasses import dataclass, field
 
 from utils import (
     PROJECT_ROOT,
@@ -45,6 +45,113 @@ from dt_arena.src.env_verification import (
 )
 
 
+def _agent_mcp_configs(agent_cfg: AgentConfig) -> list[Any]:
+    configs: list[Any] = []
+
+    def collect(agent: Any) -> None:
+        configs.extend(server for server in (agent.mcp_servers or []) if server.enabled)
+        for child in agent.sub_agents or []:
+            collect(child)
+
+    collect(agent_cfg)
+    return configs
+
+
+def _manager_alive(manager: Any) -> bool:
+    return manager is not None and bool(manager.processes) and all(
+        process.poll() is None for process in manager.processes.values()
+    )
+
+
+@dataclass
+class ReusableTaskServices:
+    """Episode-scoped MCP processes bound to a stable environment instance.
+
+    The environment databases are reset independently by TaskExecutor before
+    every H. These processes retain only transport/runtime startup work; fresh
+    AgentConfig objects are rebound to their URLs on every attempt.
+    """
+
+    resource_manager: Any
+    task_manager: Any = None
+    task_signature: tuple[Any, ...] | None = None
+    task_urls: dict[str, str] = field(default_factory=dict)
+    injection_manager: Any = None
+    injection_signature: tuple[Any, ...] | None = None
+    injection_urls: dict[str, str] = field(default_factory=dict)
+    task_id: str | None = None
+
+    @staticmethod
+    def _task_signature(agent_cfg: AgentConfig) -> tuple[Any, ...]:
+        return tuple(
+            sorted(
+                (
+                    server.name,
+                    tuple(sorted((str(key), str(value)) for key, value in (server.env or {}).items())),
+                )
+                for server in _agent_mcp_configs(agent_cfg)
+            )
+        )
+
+    def bind_task_servers(self, agent_cfg: AgentConfig) -> Any | None:
+        signature = self._task_signature(agent_cfg)
+        if signature != self.task_signature or not _manager_alive(self.task_manager):
+            if self.task_manager is not None:
+                self.task_manager.stop_all()
+            self.task_manager = None
+            self.task_urls.clear()
+            return None
+        for server in _agent_mcp_configs(agent_cfg):
+            if server.name in self.task_urls:
+                server.url = self.task_urls[server.name]
+        return self.task_manager
+
+    def retain_task_servers(self, agent_cfg: AgentConfig, manager: Any, task_id: str) -> None:
+        self.task_manager = manager
+        self.task_signature = self._task_signature(agent_cfg)
+        self.task_urls = {
+            server.name: server.url
+            for server in _agent_mcp_configs(agent_cfg)
+            if isinstance(server.url, str) and server.url
+        }
+        self.task_id = task_id
+
+    def bind_injection_servers(
+        self,
+        signature: tuple[Any, ...],
+    ) -> tuple[Any, dict[str, str]] | None:
+        if signature != self.injection_signature or not _manager_alive(self.injection_manager):
+            if self.injection_manager is not None:
+                self.injection_manager.stop_all()
+            self.injection_manager = None
+            self.injection_urls.clear()
+            return None
+        return self.injection_manager, dict(self.injection_urls)
+
+    def retain_injection_servers(
+        self,
+        signature: tuple[Any, ...],
+        manager: Any,
+        urls: dict[str, str],
+        task_id: str,
+    ) -> None:
+        self.injection_manager = manager
+        self.injection_signature = signature
+        self.injection_urls = dict(urls)
+        self.task_id = task_id
+
+    def close(self) -> None:
+        seen: set[int] = set()
+        for manager in (self.task_manager, self.injection_manager):
+            if manager is not None and id(manager) not in seen:
+                manager.stop_all()
+                seen.add(id(manager))
+        if self.task_id is not None:
+            self.resource_manager.cleanup_task(self.task_id)
+        self.task_manager = None
+        self.injection_manager = None
+
+
 def _status(**fields: object) -> None:
     """Emit a machine-readable status line consumed by the dtap eval progress UI.
 
@@ -67,6 +174,7 @@ async def run_single_task(
     debug: bool = False,
     direct_prompt: bool = False,
     disallowed_tools: Optional[List[str]] = None,
+    reusable_services: ReusableTaskServices | None = None,
 ) -> int:
     """Run a single workflow task with the selected agent implementation.
 
@@ -111,7 +219,13 @@ async def run_single_task(
 
         # Set up and start MCP servers
         if not skip_mcp:
-            manager = start_task_mcp_servers(agent_cfg, task_id, task_dir, resource_mgr)
+            manager = reusable_services.bind_task_servers(agent_cfg) if reusable_services else None
+            if manager is not None:
+                print("[MCP] Reusing episode-scoped task MCP servers.")
+            else:
+                manager = start_task_mcp_servers(agent_cfg, task_id, task_dir, resource_mgr)
+                if reusable_services is not None and manager is not None:
+                    reusable_services.retain_task_servers(agent_cfg, manager, task_id)
         else:
             print("[MCP] Skipped MCP server startup as requested.")
 
@@ -170,14 +284,37 @@ async def run_single_task(
                 }
 
                 # Start injection MCP servers
-                injection_manager, injection_config = start_injection_mcp_servers(
-                    injection_config,
-                    resource_manager=resource_mgr,
-                    task_id=task_id,
-                    task_env_overrides=build_injection_server_overrides(
-                        agent_cfg, list(required_servers)
+                injection_overrides = build_injection_server_overrides(
+                    agent_cfg, list(required_servers)
+                )
+                injection_signature = (
+                    tuple(sorted(required_servers)),
+                    tuple(
+                        sorted(
+                            (name, tuple(sorted(values.items())))
+                            for name, values in injection_overrides.items()
+                        )
                     ),
                 )
+                cached_injection = (
+                    reusable_services.bind_injection_servers(injection_signature)
+                    if reusable_services is not None
+                    else None
+                )
+                if cached_injection is not None:
+                    injection_manager, cached_urls = cached_injection
+                    injection_config["environment_servers"] = {
+                        name: {"tools": tools, "url": cached_urls.get(name, "")}
+                        for name, tools in required_servers.items()
+                    }
+                    print("[ENV INJECTION] Reusing episode-scoped injection MCP servers.")
+                else:
+                    injection_manager, injection_config = start_injection_mcp_servers(
+                        injection_config,
+                        resource_manager=resource_mgr,
+                        task_id=task_id,
+                        task_env_overrides=injection_overrides,
+                    )
 
                 if injection_config.get("environment_servers"):
                     print("[ENV INJECTION] Waiting for injection servers to be ready...")
@@ -187,6 +324,14 @@ async def run_single_task(
                     for server_name, server_info in injection_config["environment_servers"].items():
                         if isinstance(server_info, dict) and "url" in server_info:
                             injection_server_urls[server_name] = server_info["url"]
+
+                    if reusable_services is not None and injection_manager is not None:
+                        reusable_services.retain_injection_servers(
+                            injection_signature,
+                            injection_manager,
+                            injection_server_urls,
+                            task_id,
+                        )
 
                     print(f"[ENV INJECTION] Injection servers ready: {list(injection_server_urls.keys())}")
 
@@ -415,7 +560,7 @@ async def run_single_task(
             else:
                 # Context overflow — agent didn't finish, but Round 1 tool calls may have mutated DB
                 final_output = ""
-                print(f"\n[PARTIAL] Agent hit context overflow; running judge on partial execution")
+                print("\n[PARTIAL] Agent hit context overflow; running judge on partial execution")
 
             print(f"[INFO] Results saved to: {output_dir}")
 
@@ -484,10 +629,12 @@ async def run_single_task(
         traceback.print_exc()
         return 1
     finally:
-        if manager:
+        if manager and (reusable_services is None or manager is not reusable_services.task_manager):
             print("[MCP] Stopping MCP servers...")
             manager.stop_all()
-        if injection_manager:
+        if injection_manager and (
+            reusable_services is None or injection_manager is not reusable_services.injection_manager
+        ):
             print("[ENV INJECTION] Stopping injection MCP servers...")
             injection_manager.stop_all()
         if a2a_manager:

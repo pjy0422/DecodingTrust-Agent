@@ -64,6 +64,9 @@ dt_arms:
   allowed_skill_types: []
 
 execution:
+  # Reuse the isolated DTAP worker and environment containers across H. Each H
+  # still performs reset, setup, a fresh victim, and a fresh judge.
+  attempt_runtime: warm
   max_parallel: 16
   timeout_seconds: 3600
   port_range_start: 20000

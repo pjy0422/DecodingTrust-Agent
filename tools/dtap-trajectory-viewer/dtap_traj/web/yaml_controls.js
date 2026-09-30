@@ -21,6 +21,10 @@ export const EXPERIMENT_CONTROL_OPTIONS = Object.freeze({
     ['final+deterministic','Final + deterministic'],
     ['final+deterministic+digestor','Final + deterministic + digestor'],
   ]),
+  attemptRuntime: Object.freeze([
+    ['warm','Warm · reuse runtime and MCP processes'],
+    ['cold','Cold · fresh process for every H'],
+  ]),
   victimHarness: Object.freeze([
     ['openclaw','OpenClaw'],
     ['claudesdk','Claude SDK'],

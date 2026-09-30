@@ -219,7 +219,14 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
     execution = _section(
         root,
         "execution",
-        {"max_parallel", "timeout_seconds", "port_range_start", "port_range_stride", "resume"},
+        {
+            "max_parallel",
+            "timeout_seconds",
+            "port_range_start",
+            "port_range_stride",
+            "resume",
+            "attempt_runtime",
+        },
     )
     dt_arms = _section(
         root,
@@ -290,6 +297,11 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
             "policy.planning_strategy applies only to policy.engine='claude-code'; "
             "DT Arms uses its pinned native red-team loop"
         )
+    attempt_runtime = _string(
+        execution.get("attempt_runtime", "warm"), "execution.attempt_runtime"
+    )
+    if attempt_runtime not in {"warm", "cold"}:
+        raise ExperimentConfigError("execution.attempt_runtime must be 'warm' or 'cold'")
     defaults: dict[str, Any] = {
         "config": config_path,
         "dtap_root": _relative_path(
@@ -351,6 +363,7 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
             execution.get("port_range_stride", 1_024), "execution.port_range_stride"
         ),
         "resume": _boolean(execution.get("resume", False), "execution.resume"),
+        "attempt_runtime": attempt_runtime,
         "dt_arms_judge_model": _string(
             dt_arms.get("judge_model", _required(models, "victim", "models")),
             "dt_arms.judge_model",
@@ -436,6 +449,7 @@ def resolved_experiment_document(args: Any) -> dict[str, Any]:
             "port_range_start": args.port_range_start,
             "port_range_stride": args.port_range_stride,
             "resume": args.resume,
+            "attempt_runtime": args.attempt_runtime,
         },
         "dt_arms": {
             "judge_model": args.dt_arms_judge_model,
